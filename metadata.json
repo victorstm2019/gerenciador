@@ -1,0 +1,5 @@
+{
+  "name": "Gerenciador de Cobranças",
+  "description": "A comprehensive billing management dashboard featuring automated messaging, error logging, SQL connection testing, and user permission management.",
+  "requestFramePermissions": []
+}
