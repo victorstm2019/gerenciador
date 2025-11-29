@@ -94,6 +94,33 @@ db.serialize(() => {
     query_text TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  // Users Table
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    role TEXT DEFAULT 'user',
+    permissions TEXT DEFAULT '[]',
+    first_login INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Insert default users if empty
+  db.get("SELECT count(*) as count FROM users", (err, row) => {
+    if (row.count === 0) {
+      const stmt = db.prepare("INSERT INTO users (username, password, role, permissions, first_login) VALUES (?, ?, ?, ?, ?)");
+
+      // Administrador padrão
+      stmt.run('administrador', 'hiperadm', 'admin', JSON.stringify(['connections', 'messages', 'queue', 'logs', 'permissions']), 1);
+
+      // Usuários de exemplo (compatibilidade)
+
+
+      stmt.finalize();
+      console.log("Default users inserted.");
+    }
+  });
 });
 
 module.exports = db;

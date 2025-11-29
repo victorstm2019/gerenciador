@@ -255,6 +255,135 @@ app.post('/api/query/execute', async (req, res) => {
     });
 });
 
+// --- Authentication API ---
+
+// List all usernames (for login selection)
+app.get('/api/users/list', (req, res) => {
+    db.all("SELECT id, username, role FROM users ORDER BY username", (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+// Login
+app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
+    db.get("SELECT * FROM users WHERE username = ? AND password = ?", [username, password], (err, row) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        if (!row) {
+            res.status(401).json({ error: "Credenciais inválidas" });
+            return;
+        }
+        // Parse permissions JSON
+        const user = {
+            ...row,
+            permissions: JSON.parse(row.permissions || '[]')
+        };
+        res.json(user);
+    });
+});
+
+// Reset password to default (hiperadm)
+app.post('/api/auth/reset-password', (req, res) => {
+    const { username } = req.body;
+    db.run("UPDATE users SET password = ?, first_login = 1 WHERE username = ?", ['hiperadm', username], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        if (this.changes === 0) {
+            res.status(404).json({ error: "Usuário não encontrado" });
+            return;
+        }
+        res.json({ message: "Senha resetada para padrão" });
+    });
+});
+
+// Change password (for first login or password change)
+app.put('/api/users/:id/change-password', (req, res) => {
+    const { id } = req.params;
+    const { password } = req.body;
+    db.run("UPDATE users SET password = ?, first_login = 0 WHERE id = ?", [password, id], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "Senha alterada com sucesso" });
+    });
+});
+
+// --- User Management API (for UserPermissions page) ---
+
+// Get all users
+app.get('/api/users', (req, res) => {
+    db.all("SELECT id, username, role, permissions FROM users ORDER BY username", (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        const users = rows.map(row => ({
+            ...row,
+            permissions: JSON.parse(row.permissions || '[]')
+        }));
+        res.json(users);
+    });
+});
+
+// Create new user
+app.post('/api/users', (req, res) => {
+    const { username, password, role, permissions } = req.body;
+    const permissionsJson = JSON.stringify(permissions || []);
+
+    db.run("INSERT INTO users (username, password, role, permissions, first_login) VALUES (?, ?, ?, ?, 1)",
+        [username, password, role, permissionsJson], function (err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({
+                id: this.lastID,
+                username,
+                role,
+                permissions: permissions || []
+            });
+        });
+});
+
+// Update user permissions
+app.put('/api/users/:id/permissions', (req, res) => {
+    const { id } = req.params;
+    const { permissions } = req.body;
+    const permissionsJson = JSON.stringify(permissions || []);
+
+    db.run("UPDATE users SET permissions = ? WHERE id = ?", [permissionsJson, id], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "Permissions updated", changes: this.changes });
+    });
+});
+
+// Update user password (from UserPermissions page)
+app.put('/api/users/:id/password', (req, res) => {
+    const { id } = req.params;
+    const { password } = req.body;
+
+    db.run("UPDATE users SET password = ? WHERE id = ?", [password, id], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "Password updated", changes: this.changes });
+    });
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });

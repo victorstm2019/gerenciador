@@ -38,7 +38,7 @@ const UserPermissions: React.FC = () => {
 
   // Fetch users
   useEffect(() => {
-    fetch('http://localhost:3001/api/users')
+    fetch('/api/users')
       .then(res => res.json())
       .then(data => {
         setUsers(data || []);
@@ -58,7 +58,7 @@ const UserPermissions: React.FC = () => {
       : [...user.permissions, permission];
     // Optimistic UI update
     setUsers(users.map(u => (u.id === userId ? { ...u, permissions: newPermissions } : u)));
-    fetch(`http://localhost:3001/api/users/${userId}/permissions`, {
+    fetch(`/api/users/${userId}/permissions`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ permissions: newPermissions }),
@@ -72,7 +72,7 @@ const UserPermissions: React.FC = () => {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUser) return;
-    await fetch(`http://localhost:3001/api/users/${selectedUser.id}/password`, {
+    await fetch(`/api/users/${selectedUser.id}/password`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: newPassword }),
@@ -96,13 +96,13 @@ const UserPermissions: React.FC = () => {
       alert('Preencha usuário e senha');
       return;
     }
-    const resp = await fetch('http://localhost:3001/api/users', {
+    const resp = await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newUserForm),
     });
     if (resp.ok) {
-      const refreshed = await fetch('http://localhost:3001/api/users').then(r => r.json());
+      const refreshed = await fetch('/api/users').then(r => r.json());
       setUsers(refreshed || []);
       setIsCreateModalOpen(false);
       setNewUserForm({ username: '', password: '', role: 'user', permissions: [] });
