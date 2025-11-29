@@ -52,7 +52,8 @@ const Login: React.FC = () => {
       });
 
       if (!response.ok) {
-        alert('Usuário ou senha incorretos');
+        const errorData = await response.json();
+        alert(errorData.error || 'Usuário ou senha incorretos');
         return;
       }
 
@@ -91,7 +92,7 @@ const Login: React.FC = () => {
       });
 
       if (response.ok) {
-        alert('Senha resetada para "hiperadm" com sucesso!');
+        alert('Senha resetada');
         setPassword('');
       } else {
         alert('Erro ao resetar senha');
@@ -183,13 +184,15 @@ const Login: React.FC = () => {
             >
               Entrar
             </button>
-            <button
-              type="button"
-              onClick={handleResetPassword}
-              className="flex-1 bg-orange-600 text-white py-2 px-4 rounded hover:bg-orange-700 transition-colors font-medium"
-            >
-              Reset
-            </button>
+            {users.find(u => u.username === username)?.role === 'admin' && (
+              <button
+                type="button"
+                onClick={handleResetPassword}
+                className="flex-1 bg-orange-600 text-white py-2 px-4 rounded hover:bg-orange-700 transition-colors font-medium"
+              >
+                Reset
+              </button>
+            )}
           </div>
         </form>
       </div>

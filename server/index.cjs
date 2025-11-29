@@ -27,6 +27,7 @@ app.get('/api/config', (req, res) => {
 app.post('/api/config', (req, res) => {
     const {
         send_time,
+        auto_send_enabled,
         reminder_enabled,
         reminder_days,
         reminder_msg,
@@ -42,6 +43,7 @@ app.post('/api/config', (req, res) => {
     // We assume there's always one row with ID 1 (created in db.js)
     const sqlQuery = `UPDATE message_config SET 
     send_time = ?, 
+    auto_send_enabled = ?,
     reminder_enabled = ?, 
     reminder_days = ?, 
     reminder_msg = ?,
@@ -56,6 +58,7 @@ app.post('/api/config', (req, res) => {
 
     db.run(sqlQuery, [
         send_time,
+        auto_send_enabled ? 1 : 0,
         reminder_enabled ? 1 : 0,
         reminder_days,
         reminder_msg,
@@ -78,7 +81,7 @@ app.post('/api/config', (req, res) => {
 // --- Database Connection API ---
 
 // Get Connection Config
-app.get('/api/db-config', (req, res) => {
+app.get('/api/connection', (req, res) => {
     db.get("SELECT * FROM db_connections ORDER BY id DESC LIMIT 1", (err, row) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -96,7 +99,7 @@ app.get('/api/db-config', (req, res) => {
 });
 
 // Save Connection Config
-app.post('/api/db-config', (req, res) => {
+app.post('/api/connection', (req, res) => {
     const { host, user, password, database } = req.body;
 
     // Check if config exists
@@ -131,7 +134,7 @@ app.post('/api/db-config', (req, res) => {
 });
 
 // Test Connection
-app.post('/api/db-test', async (req, res) => {
+app.post('/api/connection/test', async (req, res) => {
     const { host, user, password, database } = req.body;
 
     const config = {
@@ -372,6 +375,18 @@ app.put('/api/users/:id/block', (req, res) => {
             return;
         }
         res.json({ message: "User block status updated", changes: this.changes });
+    });
+});
+
+// Delete user
+app.delete('/api/users/:id', (req, res) => {
+    const { id } = req.params;
+    db.run("DELETE FROM users WHERE id = ?", [id], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "User deleted", changes: this.changes });
     });
 });
 
@@ -618,8 +633,12 @@ app.post('/api/queue/generate-test', async (req, res) => {
                   AND FC.Tipo = 'P'
             `;
 
-            // Ensure base query doesn't have ORDER BY at the end
-            const cleanBaseQuery = baseQuery.replace(/ORDER\s+BY\s+[\w\.,\s]+$/i, '');
+            // Ensure base query doesn't have ORDER BY at the end or trailing semicolons
+            let cleanBaseQuery = baseQuery.trim();
+            // Remove trailing semicolons
+            cleanBaseQuery = cleanBaseQuery.replace(/;+\s*$/g, '');
+            // Remove ORDER BY clause at the end
+            cleanBaseQuery = cleanBaseQuery.replace(/ORDER\s+BY\s+[\w\.,\s]+$/i, '');
 
             if (messageType === 'reminder') {
                 const daysAhead = config.reminder_days || 5;

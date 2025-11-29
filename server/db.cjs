@@ -38,6 +38,33 @@ db.serialize(() => {
     }
   });
 
+  // Add auto_send_enabled column if it doesn't exist
+  db.all("PRAGMA table_info(message_config)", (err, columns) => {
+    if (!err) {
+      const columnNames = columns.map(col => col.name);
+      if (!columnNames.includes('auto_send_enabled')) {
+        db.run("ALTER TABLE message_config ADD COLUMN auto_send_enabled INTEGER DEFAULT 0");
+        console.log("Added auto_send_enabled column to message_config");
+      }
+      if (!columnNames.includes('reminder_repeat_times')) {
+        db.run("ALTER TABLE message_config ADD COLUMN reminder_repeat_times INTEGER DEFAULT 0");
+        console.log("Added reminder_repeat_times column to message_config");
+      }
+      if (!columnNames.includes('reminder_repeat_interval_days')) {
+        db.run("ALTER TABLE message_config ADD COLUMN reminder_repeat_interval_days INTEGER DEFAULT 3");
+        console.log("Added reminder_repeat_interval_days column to message_config");
+      }
+      if (!columnNames.includes('overdue_repeat_times')) {
+        db.run("ALTER TABLE message_config ADD COLUMN overdue_repeat_times INTEGER DEFAULT 0");
+        console.log("Added overdue_repeat_times column to message_config");
+      }
+      if (!columnNames.includes('overdue_repeat_interval_days')) {
+        db.run("ALTER TABLE message_config ADD COLUMN overdue_repeat_interval_days INTEGER DEFAULT 7");
+        console.log("Added overdue_repeat_interval_days column to message_config");
+      }
+    }
+  });
+
   // Queue Items Table
   db.run(`CREATE TABLE IF NOT EXISTS queue_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

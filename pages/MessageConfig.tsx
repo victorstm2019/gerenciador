@@ -8,15 +8,16 @@ interface FieldMapping {
 
 const MessageConfig: React.FC = () => {
   const [sendTime, setSendTime] = useState('09:00');
+  const [autoSendEnabled, setAutoSendEnabled] = useState(false);
   const [reminderMsg, setReminderMsg] = useState('Olá {cliente}, sua fatura vence hoje. Link: {link}');
   const [overdueMsg, setOverdueMsg] = useState('Olá {cliente}, sua fatura venceu em {vencimento}. Link: {link}');
   const [daysBefore, setDaysBefore] = useState(1);
   const [daysAfter, setDaysAfter] = useState(1);
   const [enableReminder, setEnableReminder] = useState(true);
   const [enableOverdue, setEnableOverdue] = useState(true);
-  const [reminderRepeatTimes, setReminderRepeatTimes] = useState(1);
+  const [reminderRepeatTimes, setReminderRepeatTimes] = useState(0);
   const [reminderRepeatInterval, setReminderRepeatInterval] = useState(3);
-  const [overdueRepeatTimes, setOverdueRepeatTimes] = useState(1);
+  const [overdueRepeatTimes, setOverdueRepeatTimes] = useState(0);
   const [overdueRepeatInterval, setOverdueRepeatInterval] = useState(7);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -39,16 +40,17 @@ const MessageConfig: React.FC = () => {
       .then(([configData, mappingsData]) => {
         if (configData) {
           setSendTime(configData.send_time || '09:00');
+          setAutoSendEnabled(configData.auto_send_enabled ?? false);
           setReminderMsg(configData.reminder_msg || '');
           setOverdueMsg(configData.overdue_msg || '');
           setDaysBefore(configData.reminder_days || 1);
           setDaysAfter(configData.overdue_days || 1);
           setEnableReminder(configData.reminder_enabled ?? true);
           setEnableOverdue(configData.overdue_enabled ?? true);
-          setReminderRepeatTimes(configData.reminder_repeat_times || 1);
-          setReminderRepeatInterval(configData.reminder_repeat_interval_days || 3);
-          setOverdueRepeatTimes(configData.overdue_repeat_times || 1);
-          setOverdueRepeatInterval(configData.overdue_repeat_interval_days || 7);
+          setReminderRepeatTimes(configData.reminder_repeat_times ?? 0);
+          setReminderRepeatInterval(configData.reminder_repeat_interval_days ?? 3);
+          setOverdueRepeatTimes(configData.overdue_repeat_times ?? 0);
+          setOverdueRepeatInterval(configData.overdue_repeat_interval_days ?? 7);
         }
         if (mappingsData) {
           setFieldMappings(mappingsData);
@@ -68,6 +70,7 @@ const MessageConfig: React.FC = () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         send_time: sendTime,
+        auto_send_enabled: autoSendEnabled,
         reminder_msg: reminderMsg,
         reminder_enabled: enableReminder,
         reminder_days: daysBefore,
@@ -132,7 +135,23 @@ const MessageConfig: React.FC = () => {
       <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Configuração de Mensagens</h1>
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200">Agendamento Geral</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200">Agendamento Geral</h2>
+          <div className="flex items-center gap-3">
+            <span className={`text-sm font-medium ${autoSendEnabled ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
+              {autoSendEnabled ? 'Envio Automático Ativo' : 'Envio Automático Desativado'}
+            </span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={autoSendEnabled}
+                onChange={(e) => setAutoSendEnabled(e.target.checked)}
+              />
+              <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-green-600"></div>
+            </label>
+          </div>
+        </div>
         <div className="flex items-center gap-4">
           <div className="w-full max-w-xs">
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -143,10 +162,19 @@ const MessageConfig: React.FC = () => {
               className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
               value={sendTime}
               onChange={(e) => setSendTime(e.target.value)}
+              disabled={!autoSendEnabled}
             />
             <p className="text-xs text-gray-500 mt-1">Horário diário para processamento da fila</p>
           </div>
         </div>
+        {!autoSendEnabled && (
+          <div className="mt-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded p-3">
+            <p className="text-xs text-yellow-800 dark:text-yellow-300 flex items-center gap-2">
+              <span className="material-symbols-outlined text-sm">info</span>
+              <span>O envio automático está desativado. As mensagens não serão enviadas automaticamente no horário configurado.</span>
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -19,13 +19,13 @@ const ConnectionSettings: React.FC = () => {
   const [sqlPass, setSqlPass] = useState('');
 
   // Query State
-  const [queryText, setQueryText] = useState("SELECT * FROM clientes WHERE status = 'pendente'");
+  const [queryText, setQueryText] = useState("");
   const [savedQueries, setSavedQueries] = useState<any[]>([]);
 
 
   useEffect(() => {
     // Fetch saved connection
-    fetch('http://localhost:3001/api/connection')
+    fetch('/api/connection')
       .then(res => res.json())
       .then(data => {
         if (data.host) {
@@ -38,19 +38,21 @@ const ConnectionSettings: React.FC = () => {
       .catch(err => console.error("Error fetching connection:", err));
 
     // Fetch saved queries
-    fetch('http://localhost:3001/api/query/saved')
+    fetch('/api/query/saved')
       .then(res => res.json())
       .then(data => {
+        console.log('Saved queries fetched:', data);
         setSavedQueries(data || []);
         // Load the most recent query into the editor
-        if (data && data.length > 0) {
+        if (data && data.length > 0 && data[0].query_text) {
+          console.log('Setting query text to:', data[0].query_text);
           setQueryText(data[0].query_text);
         }
       })
       .catch(err => console.error("Error fetching saved queries:", err));
 
     // Fetch W-API configuration
-    fetch('http://localhost:3001/api/wapi/config')
+    fetch('/api/wapi/config')
       .then(res => res.json())
       .then(data => {
         if (data.instance_id) {
@@ -90,14 +92,14 @@ const ConnectionSettings: React.FC = () => {
     setQueryError(null);
 
     // Save query first (optional, but requested)
-    fetch('http://localhost:3001/api/query/save', {
+    fetch('/api/query/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: queryText })
+      body: JSON.stringify({ query_text: queryText })
     });
 
     // Execute
-    fetch('http://localhost:3001/api/query/execute', {
+    fetch('/api/query/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: queryText })
@@ -392,16 +394,16 @@ const ConnectionSettings: React.FC = () => {
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => {
-                  fetch('http://localhost:3001/api/query/save', {
+                  fetch('/api/query/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: queryText })
+                    body: JSON.stringify({ query_text: queryText })
                   })
                     .then(res => res.json())
                     .then(() => {
                       alert('Query salva com sucesso!');
                       // Refresh saved queries list
-                      fetch('http://localhost:3001/api/query/saved')
+                      fetch('/api/query/saved')
                         .then(res => res.json())
                         .then(data => setSavedQueries(data || []));
                     })
@@ -449,11 +451,11 @@ const ConnectionSettings: React.FC = () => {
                         onClick={(e) => {
                           e.stopPropagation();
                           if (confirm('Excluir esta query?')) {
-                            fetch(`http://localhost:3001/api/query/saved/${sq.id}`, {
+                            fetch(`/api/query/saved/${sq.id}`, {
                               method: 'DELETE'
                             })
                               .then(() => {
-                                fetch('http://localhost:3001/api/query/saved')
+                                fetch('/api/query/saved')
                                   .then(res => res.json())
                                   .then(data => setSavedQueries(data || []))
                                   .catch(err => console.error(err));
