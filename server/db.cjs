@@ -103,6 +103,7 @@ db.serialize(() => {
     role TEXT DEFAULT 'user',
     permissions TEXT DEFAULT '[]',
     first_login INTEGER DEFAULT 1,
+    blocked INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 

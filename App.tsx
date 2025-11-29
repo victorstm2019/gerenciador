@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import Login from './pages/Login';
 import MessageConfig from './pages/MessageConfig';
@@ -23,13 +23,24 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    const u = localStorage.getItem('user');
+    if (u) setUser(JSON.parse(u));
+  }, []);
+
   const menuItems = [
-    { icon: 'settings_remote', label: 'Conexões & Testes', path: '/connections' },
-    { icon: 'message', label: 'Mensagens', path: '/messages' },
-    { icon: 'history', label: 'Fila & Histórico', path: '/queue' },
-    { icon: 'bug_report', label: 'Logs de Erro', path: '/logs' },
-    { icon: 'manage_accounts', label: 'Permissões', path: '/permissions' },
+    { icon: 'settings_remote', label: 'Conexões & Testes', path: '/connections', perm: 'connections' },
+    { icon: 'message', label: 'Mensagens', path: '/messages', perm: 'messages' },
+    { icon: 'history', label: 'Fila & Histórico', path: '/queue', perm: 'queue' },
+    { icon: 'bug_report', label: 'Logs de Erro', path: '/logs', perm: 'logs' },
+    { icon: 'manage_accounts', label: 'Permissões', path: '/permissions', perm: 'permissions' },
   ];
+
+  const filteredItems = menuItems.filter(item =>
+    user?.role === 'admin' || user?.permissions?.includes(item.perm)
+  );
 
   return (
     <div className="flex min-h-screen w-full bg-gray-100 dark:bg-gray-900">
@@ -39,7 +50,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
           <span className="text-lg font-bold">Gestão de Cobranças</span>
         </div>
         <div className="flex-1 overflow-y-auto py-4">
-          {menuItems.map((item) => (
+          {filteredItems.map((item) => (
             <SidebarItem
               key={item.path}
               icon={item.icon}
@@ -75,7 +86,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 
         {isMobileMenuOpen && (
           <div className="lg:hidden bg-gray-900 text-white absolute top-14 left-0 w-full z-50 pb-4 shadow-xl">
-            {menuItems.map((item) => (
+            {filteredItems.map((item) => (
               <SidebarItem
                 key={item.path}
                 icon={item.icon}
@@ -106,16 +117,44 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   );
 };
 
+const ProtectedRoute = ({ children, requiredPermission }: { children: React.ReactNode; requiredPermission?: string }) => {
+  const userStr = localStorage.getItem('user');
+  if (!userStr) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const user = JSON.parse(userStr);
+
+  if (requiredPermission && user.role !== 'admin' && !user.permissions.includes(requiredPermission)) {
+    // Redirect to first available page or login if none
+    if (user.permissions.length > 0) {
+      // Map permission to path
+      const permToPath: Record<string, string> = {
+        'connections': '/connections',
+        'messages': '/messages',
+        'queue': '/queue',
+        'logs': '/logs',
+        'permissions': '/permissions'
+      };
+      const firstPerm = user.permissions[0];
+      return <Navigate to={permToPath[firstPerm] || '/login'} replace />;
+    }
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
 const App = () => {
   return (
     <HashRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/connections" element={<Layout><ConnectionSettings /></Layout>} />
-        <Route path="/messages" element={<Layout><MessageConfig /></Layout>} />
-        <Route path="/logs" element={<Layout><ErrorLogs /></Layout>} />
-        <Route path="/queue" element={<Layout><QueueHistory /></Layout>} />
-        <Route path="/permissions" element={<Layout><UserPermissions /></Layout>} />
+        <Route path="/connections" element={<ProtectedRoute requiredPermission="connections"><Layout><ConnectionSettings /></Layout></ProtectedRoute>} />
+        <Route path="/messages" element={<ProtectedRoute requiredPermission="messages"><Layout><MessageConfig /></Layout></ProtectedRoute>} />
+        <Route path="/logs" element={<ProtectedRoute requiredPermission="logs"><Layout><ErrorLogs /></Layout></ProtectedRoute>} />
+        <Route path="/queue" element={<ProtectedRoute requiredPermission="queue"><Layout><QueueHistory /></Layout></ProtectedRoute>} />
+        <Route path="/permissions" element={<ProtectedRoute requiredPermission="permissions"><Layout><UserPermissions /></Layout></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </HashRouter>

@@ -280,6 +280,10 @@ app.post('/api/auth/login', (req, res) => {
             res.status(401).json({ error: "Credenciais inválidas" });
             return;
         }
+        if (row.blocked === 1) {
+            res.status(403).json({ error: "Usuário bloqueado. Entre em contato com o administrador." });
+            return;
+        }
         // Parse permissions JSON
         const user = {
             ...row,
@@ -322,7 +326,7 @@ app.put('/api/users/:id/change-password', (req, res) => {
 
 // Get all users
 app.get('/api/users', (req, res) => {
-    db.all("SELECT id, username, role, permissions FROM users ORDER BY username", (err, rows) => {
+    db.all("SELECT id, username, role, permissions, blocked FROM users ORDER BY username", (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
@@ -381,6 +385,32 @@ app.put('/api/users/:id/password', (req, res) => {
             return;
         }
         res.json({ message: "Password updated", changes: this.changes });
+    });
+});
+
+// Block/Unblock user
+app.put('/api/users/:id/block', (req, res) => {
+    const { id } = req.params;
+    const { blocked } = req.body; // true or false
+
+    db.run("UPDATE users SET blocked = ? WHERE id = ?", [blocked ? 1 : 0, id], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "User block status updated", changes: this.changes });
+    });
+});
+
+// Delete user
+app.delete('/api/users/:id', (req, res) => {
+    const { id } = req.params;
+    db.run("DELETE FROM users WHERE id = ?", [id], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "User deleted", changes: this.changes });
     });
 });
 

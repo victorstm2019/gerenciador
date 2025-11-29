@@ -5,6 +5,7 @@ interface User {
   username: string;
   role: 'admin' | 'user';
   permissions: string[];
+  blocked?: number;
 }
 
 interface NewUserForm {
@@ -88,6 +89,39 @@ const UserPermissions: React.FC = () => {
       const newPerms = exists ? prev.permissions.filter(p => p !== permKey) : [...prev.permissions, permKey];
       return { ...prev, permissions: newPerms };
     });
+  };
+
+  const handleBlockUser = async (user: User) => {
+    const newStatus = user.blocked === 1 ? 0 : 1;
+    const action = newStatus === 1 ? 'bloquear' : 'desbloquear';
+
+    if (!confirm(`Tem certeza que deseja ${action} o usuário "${user.username}"?`)) return;
+
+    try {
+      await fetch(`/api/users/${user.id}/block`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blocked: newStatus === 1 }),
+      });
+      setUsers(users.map(u => (u.id === user.id ? { ...u, blocked: newStatus } : u)));
+    } catch (err) {
+      console.error('Error blocking user:', err);
+      alert('Erro ao alterar status do usuário');
+    }
+  };
+
+  const handleDeleteUser = async (user: User) => {
+    if (!confirm(`Tem certeza que deseja EXCLUIR o usuário "${user.username}"? Esta ação não pode ser desfeita.`)) return;
+
+    try {
+      await fetch(`/api/users/${user.id}`, {
+        method: 'DELETE',
+      });
+      setUsers(users.filter(u => u.id !== user.id));
+    } catch (err) {
+      console.error('Error deleting user:', err);
+      alert('Erro ao excluir usuário');
+    }
   };
 
   const handleCreateUser = async (e: React.FormEvent) => {
@@ -174,15 +208,39 @@ const UserPermissions: React.FC = () => {
                   </div>
                 </td>
                 <td className="px-6 py-4">
-                  <button
-                    onClick={() => {
-                      setSelectedUser(user);
-                      setIsModalOpen(true);
-                    }}
-                    className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 text-xs font-medium"
-                  >
-                    Alterar Senha
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setSelectedUser(user);
+                        setIsModalOpen(true);
+                      }}
+                      className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 text-xs font-medium"
+                      title="Alterar Senha"
+                    >
+                      <span className="material-symbols-outlined text-lg">key</span>
+                    </button>
+
+                    {user.username !== 'administrador' && (
+                      <>
+                        <button
+                          onClick={() => handleBlockUser(user)}
+                          className={`${user.blocked === 1 ? 'text-green-600 hover:text-green-900 dark:text-green-400' : 'text-orange-600 hover:text-orange-900 dark:text-orange-400'} text-xs font-medium`}
+                          title={user.blocked === 1 ? "Desbloquear" : "Bloquear"}
+                        >
+                          <span className="material-symbols-outlined text-lg">
+                            {user.blocked === 1 ? 'lock_open' : 'lock'}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(user)}
+                          className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium"
+                          title="Excluir"
+                        >
+                          <span className="material-symbols-outlined text-lg">delete</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
