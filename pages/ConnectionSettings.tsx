@@ -7,6 +7,11 @@ const ConnectionSettings: React.FC = () => {
   const [queryResults, setQueryResults] = useState<any[] | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
 
+  // W-API State
+  const [wapiInstanceId, setWapiInstanceId] = useState('');
+  const [wapiToken, setWapiToken] = useState('');
+  const [wapiTestPhone, setWapiTestPhone] = useState('');
+
   // Connection State
   const [sqlHost, setSqlHost] = useState('');
   const [sqlDb, setSqlDb] = useState('');
@@ -43,6 +48,17 @@ const ConnectionSettings: React.FC = () => {
         }
       })
       .catch(err => console.error("Error fetching saved queries:", err));
+
+    // Fetch W-API configuration
+    fetch('http://localhost:3001/api/wapi/config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.instance_id) {
+          setWapiInstanceId(data.instance_id);
+          setWapiToken(data.bearer_token);
+        }
+      })
+      .catch(err => console.error("Error fetching W-API config:", err));
   }, []);
 
   const saveConnection = () => {
@@ -66,14 +82,6 @@ const ConnectionSettings: React.FC = () => {
         setIsTestingSQL(false);
         alert('Erro ao salvar: ' + err);
       });
-  };
-
-  const testWA = () => {
-    setIsTestingWA(true);
-    setTimeout(() => {
-      setIsTestingWA(false);
-      alert('Conexão WhatsApp API bem sucedida! (Mock)');
-    }, 1500);
   };
 
   const executeQuery = () => {
@@ -224,39 +232,142 @@ const ConnectionSettings: React.FC = () => {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200 flex items-center gap-2">
             <span className="material-symbols-outlined">chat</span>
-            WhatsApp API
+            WhatsApp API (W-API)
           </h2>
           <div className="space-y-4">
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-3 mb-4">
+              <p className="text-xs text-blue-700 dark:text-blue-300 flex items-center gap-2">
+                <span className="material-symbols-outlined text-sm">info</span>
+                <span>URL da API: <strong>https://w-api.izy.one/</strong></span>
+              </p>
+            </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL da API</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Instance ID</label>
               <input
                 className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                placeholder="https://api.exemplo.com"
-                type="url"
+                placeholder="Seu Instance ID"
+                type="text"
+                value={wapiInstanceId}
+                onChange={(e) => setWapiInstanceId(e.target.value)}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Token de Autenticação</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Bearer Token</label>
               <input
                 className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                placeholder="Cole seu token aqui"
+                placeholder="Seu token de autenticação"
                 type="password"
+                value={wapiToken}
+                onChange={(e) => setWapiToken(e.target.value)}
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Telefone para Teste (opcional)</label>
+              <input
+                className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                placeholder="5511999999999"
+                type="text"
+                value={wapiTestPhone}
+                onChange={(e) => setWapiTestPhone(e.target.value)}
+              />
+              <p className="text-xs text-gray-500 mt-1">Formato: código do país + DDD + número (sem espaços ou caracteres)</p>
             </div>
           </div>
 
           <div className="flex gap-3 mt-6">
             <button
-              onClick={testWA}
-              disabled={isTestingWA}
+              onClick={() => {
+                setIsTestingWA(true);
+                fetch('http://localhost:3001/api/wapi/config', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    instance_id: wapiInstanceId,
+                    bearer_token: wapiToken
+                  })
+                })
+                  .then(res => res.json())
+                  .then(() => {
+                    setIsTestingWA(false);
+                    alert('Configuração W-API salva com sucesso!');
+                  })
+                  .catch(err => {
+                    setIsTestingWA(false);
+                    alert('Erro ao salvar: ' + err);
+                  });
+              }}
+              disabled={isTestingWA || !wapiInstanceId || !wapiToken}
               className="flex-1 bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700 transition-colors disabled:opacity-50"
             >
-              {isTestingWA ? 'Conectando...' : 'Testar Conexão'}
+              {isTestingWA ? 'Salvando...' : 'Salvar Configuração'}
             </button>
-            <button className="px-4 py-2 border border-green-600 text-green-600 rounded hover:bg-green-50 dark:hover:bg-gray-700">
-              Enviar Teste
+            <button
+              onClick={() => {
+                setIsTestingWA(true);
+                fetch('http://localhost:3001/api/wapi/test', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    instance_id: wapiInstanceId,
+                    bearer_token: wapiToken
+                  })
+                })
+                  .then(res => res.json())
+                  .then(data => {
+                    setIsTestingWA(false);
+                    if (data.success) {
+                      alert('✅ ' + data.message);
+                    } else {
+                      alert('❌ Erro: ' + (data.error || 'Falha na conexão'));
+                    }
+                  })
+                  .catch(err => {
+                    setIsTestingWA(false);
+                    alert('Erro ao testar: ' + err);
+                  });
+              }}
+              disabled={isTestingWA || !wapiInstanceId || !wapiToken}
+              className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white disabled:opacity-50"
+            >
+              Testar
             </button>
           </div>
+          <button
+            onClick={() => {
+              if (!wapiTestPhone) {
+                alert('Por favor, insira um número de telefone para teste');
+                return;
+              }
+              setIsTestingWA(true);
+              fetch('http://localhost:3001/api/wapi/send-test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  instance_id: wapiInstanceId,
+                  bearer_token: wapiToken,
+                  phone: wapiTestPhone,
+                  message: 'Mensagem de teste do Gerenciador - W-API configurado com sucesso! 🎉'
+                })
+              })
+                .then(res => res.json())
+                .then(data => {
+                  setIsTestingWA(false);
+                  if (data.success) {
+                    alert('✅ ' + data.message);
+                  } else {
+                    alert('❌ Erro: ' + (data.error || 'Falha ao enviar mensagem'));
+                  }
+                })
+                .catch(err => {
+                  setIsTestingWA(false);
+                  alert('Erro ao enviar: ' + err);
+                });
+            }}
+            disabled={isTestingWA || !wapiInstanceId || !wapiToken || !wapiTestPhone}
+            className="w-full mt-3 px-4 py-2 border border-green-600 text-green-600 rounded hover:bg-green-50 dark:hover:bg-gray-700 disabled:opacity-50"
+          >
+            Enviar Mensagem de Teste
+          </button>
         </div>
       </div>
 

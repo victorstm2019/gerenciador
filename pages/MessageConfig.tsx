@@ -1,5 +1,11 @@
 import React, { useState, useEffect } from 'react';
 
+interface FieldMapping {
+  id?: number;
+  message_variable: string;
+  database_column: string;
+}
+
 const MessageConfig: React.FC = () => {
   const [sendTime, setSendTime] = useState('09:00');
   const [reminderMsg, setReminderMsg] = useState('Olá {cliente}, sua fatura vence hoje. Link: {link}');
@@ -14,23 +20,38 @@ const MessageConfig: React.FC = () => {
   const [overdueRepeatInterval, setOverdueRepeatInterval] = useState(7);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Field Mappings State
+  const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>([]);
+
+  // Available database columns
+  const availableColumns = [
+    'codigocliente', 'nomecliente', 'cpfcliente', 'fone1', 'fone2',
+    'descricaoparcela', 'emissao', 'vencimento', 'valorbrutoparcela',
+    'desconto', 'juros', 'multa', 'valorfinalparcela', 'valortotaldevido', 'totalvencido'
+  ];
+
   useEffect(() => {
     setIsLoading(true);
-    fetch('/api/config')
-      .then(res => res.json())
-      .then(data => {
-        if (data) {
-          setSendTime(data.send_time || '09:00');
-          setReminderMsg(data.reminder_msg || '');
-          setOverdueMsg(data.overdue_msg || '');
-          setDaysBefore(data.reminder_days || 1);
-          setDaysAfter(data.overdue_days || 1);
-          setEnableReminder(data.reminder_enabled ?? true);
-          setEnableOverdue(data.overdue_enabled ?? true);
-          setReminderRepeatTimes(data.reminder_repeat_times || 1);
-          setReminderRepeatInterval(data.reminder_repeat_interval_days || 3);
-          setOverdueRepeatTimes(data.overdue_repeat_times || 1);
-          setOverdueRepeatInterval(data.overdue_repeat_interval_days || 7);
+    Promise.all([
+      fetch('/api/config').then(res => res.json()),
+      fetch('/api/field-mappings').then(res => res.json())
+    ])
+      .then(([configData, mappingsData]) => {
+        if (configData) {
+          setSendTime(configData.send_time || '09:00');
+          setReminderMsg(configData.reminder_msg || '');
+          setOverdueMsg(configData.overdue_msg || '');
+          setDaysBefore(configData.reminder_days || 1);
+          setDaysAfter(configData.overdue_days || 1);
+          setEnableReminder(configData.reminder_enabled ?? true);
+          setEnableOverdue(configData.overdue_enabled ?? true);
+          setReminderRepeatTimes(configData.reminder_repeat_times || 1);
+          setReminderRepeatInterval(configData.reminder_repeat_interval_days || 3);
+          setOverdueRepeatTimes(configData.overdue_repeat_times || 1);
+          setOverdueRepeatInterval(configData.overdue_repeat_interval_days || 7);
+        }
+        if (mappingsData) {
+          setFieldMappings(mappingsData);
         }
         setIsLoading(false);
       })
@@ -68,6 +89,34 @@ const MessageConfig: React.FC = () => {
         setIsLoading(false);
         alert('Erro ao salvar: ' + err);
       });
+  };
+
+  const saveMappings = () => {
+    setIsLoading(true);
+    fetch('/api/field-mappings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fieldMappings)
+    })
+      .then(res => res.json())
+      .then(() => {
+        setIsLoading(false);
+        alert('Mapeamentos salvos com sucesso!');
+      })
+      .catch(err => {
+        setIsLoading(false);
+        alert('Erro ao salvar mapeamentos: ' + err);
+      });
+  };
+
+  const updateMapping = (variable: string, column: string) => {
+    setFieldMappings(prev =>
+      prev.map(m =>
+        m.message_variable === variable
+          ? { ...m, database_column: column }
+          : m
+      )
+    );
   };
 
   if (isLoading) {
@@ -268,25 +317,83 @@ const MessageConfig: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-        <h3 className="text-sm font-bold text-blue-800 dark:text-blue-300 mb-2">Variáveis Disponíveis</h3>
-        <div className="flex flex-wrap gap-2">
-          {[
-            '@codigocliente',
-            '@nomecliente',
-            '@cpfcliente',
-            '@valorparcela',
-            '@vencimentoparcela',
-            '@valortotaldevido',
-            '@cnpjemitente',
-            '@razaoemitente',
-            '@foneemitente'
-          ].map(v => (
-            <span key={v} className="bg-white dark:bg-gray-800 px-2 py-1 rounded text-xs font-mono border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/30" title="Clique para copiar" onClick={() => navigator.clipboard.writeText(v)}>
-              {v}
-            </span>
-          ))}
+      {/* Field Mappings Card - Moved to bottom and made more compact */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200 flex items-center gap-2">
+              <span className="material-symbols-outlined">link</span>
+              Mapeamento de Campos
+            </h2>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Vincule as variáveis das mensagens com os campos do banco SQL
+            </p>
+          </div>
+          <button
+            onClick={saveMappings}
+            className="bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700 transition-colors text-sm"
+          >
+            Salvar Mapeamento
+          </button>
         </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Left column: items 1-8 */}
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3">Campos 1-8</p>
+            {fieldMappings.slice(0, 8).map((mapping, index) => (
+              <div key={mapping.message_variable} className="flex items-center gap-2 bg-gray-50 dark:bg-gray-900 p-2.5 rounded">
+                <span className="text-xs font-bold text-gray-400 w-6">{index + 1}.</span>
+                <div className="flex-shrink-0 w-40">
+                  <span className="font-mono text-xs text-blue-600 dark:text-blue-400 font-medium">
+                    {mapping.message_variable}
+                  </span>
+                </div>
+                <span className="text-gray-400 text-xs">=</span>
+                <select
+                  value={mapping.database_column}
+                  onChange={(e) => updateMapping(mapping.message_variable, e.target.value)}
+                  className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                >
+                  <option value="">Selecione...</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+
+          {/* Right column: items 9-15 */}
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3">Campos 9-15</p>
+            {fieldMappings.slice(8).map((mapping, index) => (
+              <div key={mapping.message_variable} className="flex items-center gap-2 bg-gray-50 dark:bg-gray-900 p-2.5 rounded">
+                <span className="text-xs font-bold text-gray-400 w-6">{index + 9}.</span>
+                <div className="flex-shrink-0 w-40">
+                  <span className="font-mono text-xs text-blue-600 dark:text-blue-400 font-medium">
+                    {mapping.message_variable}
+                  </span>
+                </div>
+                <span className="text-gray-400 text-xs">=</span>
+                <select
+                  value={mapping.database_column}
+                  onChange={(e) => updateMapping(mapping.message_variable, e.target.value)}
+                  className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                >
+                  <option value="">Selecione...</option>
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {fieldMappings.length === 0 && (
+          <p className="text-center text-gray-500 py-8">Nenhum mapeamento configurado.</p>
+        )}
       </div>
 
       <div className="flex justify-end pt-4">

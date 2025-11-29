@@ -122,6 +122,65 @@ db.serialize(() => {
       console.log("Default users inserted.");
     }
   });
+
+  // W-API Configuration Table
+  db.run(`CREATE TABLE IF NOT EXISTS wapi_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    instance_id TEXT NOT NULL,
+    bearer_token TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Field Mappings Table (for mapping message variables to database columns)
+  db.run(`CREATE TABLE IF NOT EXISTS field_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_variable TEXT NOT NULL UNIQUE,
+    database_column TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Insert default field mappings if table is empty
+  db.get("SELECT count(*) as count FROM field_mappings", (err, row) => {
+    if (!err && row.count === 0) {
+      const stmt = db.prepare("INSERT INTO field_mappings (message_variable, database_column) VALUES (?, ?)");
+      stmt.run('@codigocliente', 'codigocliente');
+      stmt.run('@nomecliente', 'nomecliente');
+      stmt.run('@cpfcliente', 'cpfcliente');
+      stmt.run('@fone1', 'fone1');
+      stmt.run('@fone2', 'fone2');
+      stmt.run('@descricaoparcela', 'descricaoparcela');
+      stmt.run('@emissaoparcela', 'emissao');
+      stmt.run('@vencimentoparcela', 'vencimento');
+      stmt.run('@valorbrutoparcela', 'valorbrutoparcela');
+      stmt.run('@desconto', 'desconto');
+      stmt.run('@juros', 'juros');
+      stmt.run('@multa', 'multa');
+      stmt.run('@valorfinalparcela', 'valorfinalparcela');
+      stmt.run('@valortotaldevido', 'valortotaldevido');
+      stmt.run('@totalvencido', 'totalvencido');
+      stmt.finalize();
+      console.log("Default field mappings inserted.");
+    }
+  });
+
+  // Add columns to blocked_clients if they don't exist
+  db.all("PRAGMA table_info(blocked_clients)", (err, columns) => {
+    if (!err) {
+      const columnNames = columns.map(col => col.name);
+
+      if (!columnNames.includes('block_type')) {
+        db.run("ALTER TABLE blocked_clients ADD COLUMN block_type TEXT DEFAULT 'client'");
+      }
+      if (!columnNames.includes('installment_id')) {
+        db.run("ALTER TABLE blocked_clients ADD COLUMN installment_id TEXT");
+      }
+      if (!columnNames.includes('client_code')) {
+        db.run("ALTER TABLE blocked_clients ADD COLUMN client_code TEXT");
+      }
+    }
+  });
 });
 
 module.exports = db;
