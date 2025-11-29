@@ -8,21 +8,29 @@ const MessageConfig: React.FC = () => {
   const [daysAfter, setDaysAfter] = useState(1);
   const [enableReminder, setEnableReminder] = useState(true);
   const [enableOverdue, setEnableOverdue] = useState(true);
+  const [reminderRepeatTimes, setReminderRepeatTimes] = useState(1);
+  const [reminderRepeatInterval, setReminderRepeatInterval] = useState(3);
+  const [overdueRepeatTimes, setOverdueRepeatTimes] = useState(1);
+  const [overdueRepeatInterval, setOverdueRepeatInterval] = useState(7);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     setIsLoading(true);
-    fetch('http://localhost:3001/api/config/messages')
+    fetch('/api/config')
       .then(res => res.json())
       .then(data => {
         if (data) {
           setSendTime(data.send_time || '09:00');
           setReminderMsg(data.reminder_msg || '');
           setOverdueMsg(data.overdue_msg || '');
-          setDaysBefore(data.days_before || 1);
-          setDaysAfter(data.days_after || 1);
-          setEnableReminder(data.enable_reminder ?? true);
-          setEnableOverdue(data.enable_overdue ?? true);
+          setDaysBefore(data.reminder_days || 1);
+          setDaysAfter(data.overdue_days || 1);
+          setEnableReminder(data.reminder_enabled ?? true);
+          setEnableOverdue(data.overdue_enabled ?? true);
+          setReminderRepeatTimes(data.reminder_repeat_times || 1);
+          setReminderRepeatInterval(data.reminder_repeat_interval_days || 3);
+          setOverdueRepeatTimes(data.overdue_repeat_times || 1);
+          setOverdueRepeatInterval(data.overdue_repeat_interval_days || 7);
         }
         setIsLoading(false);
       })
@@ -34,17 +42,21 @@ const MessageConfig: React.FC = () => {
 
   const saveConfig = () => {
     setIsLoading(true);
-    fetch('http://localhost:3001/api/config/messages', {
+    fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         send_time: sendTime,
         reminder_msg: reminderMsg,
+        reminder_enabled: enableReminder,
+        reminder_days: daysBefore,
+        reminder_repeat_times: reminderRepeatTimes,
+        reminder_repeat_interval_days: reminderRepeatInterval,
         overdue_msg: overdueMsg,
-        days_before: daysBefore,
-        days_after: daysAfter,
-        enable_reminder: enableReminder,
-        enable_overdue: enableOverdue
+        overdue_enabled: enableOverdue,
+        overdue_days: daysAfter,
+        overdue_repeat_times: overdueRepeatTimes,
+        overdue_repeat_interval_days: overdueRepeatInterval
       })
     })
       .then(res => res.json())
@@ -120,6 +132,44 @@ const MessageConfig: React.FC = () => {
                 onChange={(e) => setDaysBefore(parseInt(e.target.value))}
               />
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Repetir quantas vezes
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="10"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  value={reminderRepeatTimes}
+                  onChange={(e) => setReminderRepeatTimes(parseInt(e.target.value))}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Intervalo (dias)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="30"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  value={reminderRepeatInterval}
+                  onChange={(e) => setReminderRepeatInterval(parseInt(e.target.value))}
+                />
+              </div>
+            </div>
+
+            {reminderRepeatTimes > 0 && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded p-2">
+                <p className="text-xs text-yellow-800 dark:text-yellow-300">
+                  💡 Esta mensagem será enviada <strong>{reminderRepeatTimes} {reminderRepeatTimes === 1 ? 'vez' : 'vezes'}</strong> com intervalo de <strong>{reminderRepeatInterval} dias</strong> antes do vencimento.
+                </p>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Modelo da Mensagem
@@ -165,6 +215,44 @@ const MessageConfig: React.FC = () => {
                 onChange={(e) => setDaysAfter(parseInt(e.target.value))}
               />
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Repetir quantas vezes
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="10"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  value={overdueRepeatTimes}
+                  onChange={(e) => setOverdueRepeatTimes(parseInt(e.target.value))}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Intervalo (dias)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="30"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  value={overdueRepeatInterval}
+                  onChange={(e) => setOverdueRepeatInterval(parseInt(e.target.value))}
+                />
+              </div>
+            </div>
+
+            {overdueRepeatTimes > 0 && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-2">
+                <p className="text-xs text-red-800 dark:text-red-300">
+                  💡 Esta mensagem será enviada <strong>{overdueRepeatTimes} {overdueRepeatTimes === 1 ? 'vez' : 'vezes'}</strong> com intervalo de <strong>{overdueRepeatInterval} dias</strong> após o vencimento.
+                </p>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Modelo da Mensagem

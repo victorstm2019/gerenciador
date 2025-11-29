@@ -49,6 +49,14 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
         <div className="flex h-16 items-center px-6 border-b border-gray-800">
           <span className="text-lg font-bold">Gestão de Cobranças</span>
         </div>
+        {user && (
+          <div className="px-6 py-3 border-b border-gray-800">
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <span className="material-symbols-outlined text-lg">account_circle</span>
+              <span>{user.username}</span>
+            </div>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto py-4">
           {filteredItems.map((item) => (
             <SidebarItem

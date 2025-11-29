@@ -25,24 +25,48 @@ app.get('/api/config', (req, res) => {
 
 // Update Config
 app.post('/api/config', (req, res) => {
-    const { send_time, reminder_enabled, reminder_days, reminder_msg, overdue_enabled, overdue_days, overdue_msg } = req.body;
+    const {
+        send_time,
+        reminder_enabled,
+        reminder_days,
+        reminder_msg,
+        reminder_repeat_times,
+        reminder_repeat_interval_days,
+        overdue_enabled,
+        overdue_days,
+        overdue_msg,
+        overdue_repeat_times,
+        overdue_repeat_interval_days
+    } = req.body;
 
     // We assume there's always one row with ID 1 (created in db.js)
     const sqlQuery = `UPDATE message_config SET 
     send_time = ?, 
     reminder_enabled = ?, 
     reminder_days = ?, 
-    reminder_msg = ?, 
+    reminder_msg = ?,
+    reminder_repeat_times = ?,
+    reminder_repeat_interval_days = ?,
     overdue_enabled = ?, 
     overdue_days = ?, 
-    overdue_msg = ? 
-    WHERE id = 1`; // Or use a WHERE clause that targets the single config row
+    overdue_msg = ?,
+    overdue_repeat_times = ?,
+    overdue_repeat_interval_days = ?
+    WHERE id = 1`;
 
-    // Note: In a robust system we might upsert, but here we rely on the seed.
-    // Let's use a more robust approach: check if exists, if not insert, else update.
-    // But for now, since db.js seeds it, update is fine.
-
-    db.run(sqlQuery, [send_time, reminder_enabled, reminder_days, reminder_msg, overdue_enabled, overdue_days, overdue_msg], function (err) {
+    db.run(sqlQuery, [
+        send_time,
+        reminder_enabled,
+        reminder_days,
+        reminder_msg,
+        reminder_repeat_times ?? 1,
+        reminder_repeat_interval_days ?? 3,
+        overdue_enabled,
+        overdue_days,
+        overdue_msg,
+        overdue_repeat_times ?? 1,
+        overdue_repeat_interval_days ?? 7
+    ], function (err) {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
