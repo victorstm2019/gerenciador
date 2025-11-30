@@ -65,7 +65,7 @@ const ConnectionSettings: React.FC = () => {
 
   const saveConnection = () => {
     setIsTestingSQL(true);
-    fetch('http://localhost:3001/api/connection', {
+    fetch('http://localhost:3002/api/connection', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -188,7 +188,7 @@ const ConnectionSettings: React.FC = () => {
             <button
               onClick={() => {
                 setIsTestingSQL(true);
-                fetch('http://localhost:3001/api/connection/test', {
+                fetch('http://localhost:3002/api/connection/test', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({

@@ -17,7 +17,7 @@ const ErrorLogs: React.FC = () => {
   const [endDate, setEndDate] = useState('');
 
   useEffect(() => {
-    fetch('http://localhost:3001/api/logs')
+    fetch('http://localhost:3002/api/logs')
       .then(res => res.json())
       .then(data => {
         setLogs(data || []);

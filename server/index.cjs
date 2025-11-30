@@ -5,7 +5,7 @@ const db = require('./db.cjs');
 const sql = require('mssql');
 
 const app = express();
-const PORT = 3001;
+const PORT = 3002;
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -724,6 +724,196 @@ app.post('/api/queue/generate-test', async (req, res) => {
     } catch (error) {
         console.error("Error generating test messages:", error);
         res.status(500).json({ error: error.message || "Erro ao gerar mensagens de teste" });
+    }
+});
+
+// Generate batch messages (manual generation)
+app.post('/api/queue/generate-batch', async (req, res) => {
+    const { types } = req.body; // ['reminder', 'overdue']
+
+    if (!Array.isArray(types) || types.length === 0) {
+        res.status(400).json({ error: "Types array is required" });
+        return;
+    }
+
+    try {
+        // Get message configuration
+        const config = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM message_config LIMIT 1", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!config) {
+            res.status(400).json({ error: "Configuração de mensagens não encontrada" });
+            return;
+        }
+
+        // Get field mappings
+        const mappings = await new Promise((resolve, reject) => {
+            db.all("SELECT * FROM field_mappings", (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+
+        const fieldMap = {};
+        mappings.forEach(m => {
+            fieldMap[m.message_variable] = m.database_column;
+        });
+
+        // Get SQL connection config
+        const connectionConfig = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM db_connections ORDER BY id DESC LIMIT 1", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!connectionConfig) {
+            res.status(400).json({ error: "Configuração de conexão SQL não encontrada" });
+            return;
+        }
+
+        const sqlConfig = {
+            user: connectionConfig.user,
+            password: connectionConfig.password,
+            server: connectionConfig.host,
+            database: connectionConfig.database,
+            options: {
+                encrypt: false,
+                trustServerCertificate: true
+            }
+        };
+
+        let pool;
+        let allMessages = [];
+
+        try {
+            pool = await sql.connect(sqlConfig);
+            const today = new Date();
+
+            // Get saved query or use default
+            const savedQuery = await new Promise((resolve, reject) => {
+                db.get("SELECT query_text FROM saved_queries ORDER BY id DESC LIMIT 1", (err, row) => {
+                    if (err) resolve(null);
+                    else resolve(row ? row.query_text : null);
+                });
+            });
+
+            const baseQuery = savedQuery || `
+                SELECT
+                    FC.Cliente__Codigo AS codigocliente,
+                    C.Nome AS nomecliente,
+                    C.CNPJ AS cpfcliente,
+                    c.fone1 as fone1,
+                    c.fone2 as fone2,
+                    CONVERT(VARCHAR(10), FC.EMISSAO, 103) AS emissao,
+                    CONVERT(VARCHAR(10), FC.VENCIMENTO, 103) AS vencimento,
+                    FC.Valor AS valorbrutoparcela,
+                    FC.Desconto AS desconto,
+                    FC.Juros AS juros,
+                    FC.Multa AS multa,
+                    FC.Valor_Final AS valorfinalparcela,
+                    SUM(FC.Valor_Final) OVER (PARTITION BY FC.Cliente__Codigo) AS valortotaldevido,
+                    SUM(CASE WHEN FC.VENCIMENTO < CAST(GETDATE() AS DATE) THEN FC.Valor_Final ELSE 0 END) OVER (PARTITION BY FC.Cliente__Codigo) AS totalvencido,
+                    FC.Descricao AS descricaoparcela
+                FROM FINANCEIRO_CONTA FC
+                LEFT JOIN Cli_For C ON FC.Cliente__Codigo = C.Codigo
+                WHERE FC.PAGAR_RECEBER = 'R'
+                  AND FC.SITUACAO = 'A'
+                  AND FC.STATUS <> -1
+                  AND FC.Cliente__Codigo <> 1
+                  AND FC.Tipo = 'P'
+            `;
+
+            let cleanBaseQuery = baseQuery.trim();
+            cleanBaseQuery = cleanBaseQuery.replace(/;+\s*$/g, '');
+            cleanBaseQuery = cleanBaseQuery.replace(/ORDER\s+BY\s+[\w\.,\s]+$/i, '');
+
+            for (const type of types) {
+                let finalQuery;
+                if (type === 'reminder') {
+                    const daysAhead = config.reminder_days || 5;
+                    const targetDate = new Date(today);
+                    targetDate.setDate(today.getDate() + daysAhead);
+
+                    finalQuery = `
+                        WITH BaseData AS (
+                            ${cleanBaseQuery}
+                        )
+                        SELECT *
+                        FROM BaseData
+                        WHERE CONVERT(DATE, vencimento, 103) >= '${today.toISOString().split('T')[0]}'
+                        AND CONVERT(DATE, vencimento, 103) <= '${targetDate.toISOString().split('T')[0]}'
+                        ORDER BY CONVERT(DATE, vencimento, 103)
+                    `;
+                } else if (type === 'overdue') {
+                    const daysBack = config.overdue_days || 3;
+                    const targetDate = new Date(today);
+                    targetDate.setDate(today.getDate() - daysBack);
+
+                    finalQuery = `
+                        WITH BaseData AS (
+                            ${cleanBaseQuery}
+                        )
+                        SELECT *
+                        FROM BaseData
+                        WHERE CONVERT(DATE, vencimento, 103) < '${today.toISOString().split('T')[0]}'
+                        AND CONVERT(DATE, vencimento, 103) >= '${targetDate.toISOString().split('T')[0]}'
+                        ORDER BY CONVERT(DATE, vencimento, 103) DESC
+                    `;
+                }
+
+                if (finalQuery) {
+                    const result = await pool.request().query(finalQuery);
+                    const clients = result.recordset;
+                    const template = type === 'reminder' ? config.reminder_msg : config.overdue_msg;
+
+                    const messages = clients.map(client => {
+                        let message = template;
+                        Object.keys(fieldMap).forEach(variable => {
+                            const dbColumn = fieldMap[variable];
+                            let value = client[dbColumn] || '';
+                            if (typeof value === 'number' && (variable.includes('valor') || variable.includes('juros') || variable.includes('multa'))) {
+                                value = value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            } else if (value instanceof Date) {
+                                value = value.toLocaleDateString('pt-BR');
+                            } else if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}/)) {
+                                const date = new Date(value);
+                                value = date.toLocaleDateString('pt-BR');
+                            }
+                            message = message.replace(new RegExp(variable, 'g'), value);
+                        });
+
+                        return {
+                            id: client.codigocliente || client.id,
+                            code: client.codigocliente,
+                            clientName: client.nomecliente,
+                            cpf: client.cpfcliente,
+                            dueDate: client.vencimento,
+                            value: client.valorfinalparcela || client.valorbrutoparcela || 0,
+                            messageContent: message,
+                            messageType: type,
+                            status: 'PREVIEW'
+                        };
+                    });
+                    allMessages = [...allMessages, ...messages];
+                }
+            }
+
+            res.json(allMessages);
+
+        } finally {
+            if (pool) {
+                await pool.close();
+            }
+        }
+
+    } catch (error) {
+        console.error("Error generating batch messages:", error);
+        res.status(500).json({ error: error.message || "Erro ao gerar lote de mensagens" });
     }
 });
 

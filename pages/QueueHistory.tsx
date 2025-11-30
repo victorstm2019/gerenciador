@@ -38,6 +38,11 @@ const QueueHistory: React.FC = () => {
   const [blockingItem, setBlockingItem] = useState<{ item: QueueItem, type: 'installment' | 'client' } | null>(null);
   const [blockReason, setBlockReason] = useState('');
 
+  // New manual generation states
+  const [sendMode, setSendMode] = useState<'queue' | 'manual'>('queue'); // padrão: fila
+  const [showManualWarning, setShowManualWarning] = useState(false);
+  const [selectedBatchTypes, setSelectedBatchTypes] = useState<('reminder' | 'overdue')[]>([]);
+
   // Sorting and filtering states
   const [sortBy, setSortBy] = useState<'code' | 'name' | 'dueDate' | 'value' | 'status'>('code');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -53,8 +58,8 @@ const QueueHistory: React.FC = () => {
   const fetchData = () => {
     setLoading(true);
     Promise.all([
-      fetch('http://localhost:3001/api/queue').then(res => res.json()),
-      fetch('http://localhost:3001/api/blocked').then(res => res.json())
+      fetch('http://localhost:3002/api/queue/today').then(res => res.json()), // Changed to fetch today's queue by default
+      fetch('http://localhost:3002/api/blocked').then(res => res.json())
     ])
       .then(([queueData, blockedData]) => {
         setQueue(queueData || []);
@@ -67,9 +72,65 @@ const QueueHistory: React.FC = () => {
       });
   };
 
+  const generateReminders = () => {
+    if (sendMode === 'manual') {
+      // In manual mode, we just preview
+      generateTest('reminder');
+    } else {
+      // In queue mode, we might want to confirm or just add to queue
+      // For now, let's use the same test generation but maybe with a different flag if needed
+      // Or simply warn that this is manual generation
+      generateTest('reminder');
+    }
+  };
+
+  const generateOverdue = () => {
+    if (sendMode === 'manual') {
+      generateTest('overdue');
+    } else {
+      generateTest('overdue');
+    }
+  };
+
+  const openManualBatchModal = () => {
+    setShowManualWarning(true);
+    setSelectedBatchTypes([]);
+  };
+
+  const handleManualBatchConfirm = () => {
+    if (selectedBatchTypes.length === 0) {
+      alert('Selecione pelo menos um tipo de mensagem.');
+      return;
+    }
+
+    setLoading(true);
+    fetch('http://localhost:3002/api/queue/generate-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ types: selectedBatchTypes })
+    })
+      .then(res => res.json())
+      .then(data => {
+        setLoading(false);
+        if (Array.isArray(data)) {
+          setPreviewMessages(data);
+          setShowManualWarning(false);
+          setShowPreview(true);
+        } else {
+          console.error("API returned non-array:", data);
+          const errorMessage = (data && data.error) ? data.error : 'Resposta inválida da API';
+          alert('Erro ao gerar lote: ' + errorMessage);
+        }
+      })
+      .catch(err => {
+        setLoading(false);
+        alert('Erro ao gerar lote: ' + err);
+      });
+  };
+
   const generateTest = (messageType: 'reminder' | 'overdue') => {
     setLoading(true);
-    fetch('http://localhost:3001/api/queue/generate-test', {
+    fetch('http://localhost:3002/api/queue/generate-test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messageType, limit: 20 })
@@ -77,8 +138,13 @@ const QueueHistory: React.FC = () => {
       .then(res => res.json())
       .then(data => {
         setLoading(false);
-        setPreviewMessages(data || []);
-        setShowPreview(true);
+        if (Array.isArray(data)) {
+          setPreviewMessages(data);
+          setShowPreview(true);
+        } else {
+          console.error("API returned non-array:", data);
+          alert('Erro ao gerar teste: Resposta inválida da API');
+        }
       })
       .catch(err => {
         setLoading(false);
@@ -92,7 +158,7 @@ const QueueHistory: React.FC = () => {
       return;
     }
 
-    fetch('http://localhost:3001/api/blocked/by-installment', {
+    fetch('http://localhost:3002/api/blocked/by-installment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -118,7 +184,7 @@ const QueueHistory: React.FC = () => {
       return;
     }
 
-    fetch('http://localhost:3001/api/blocked/by-client', {
+    fetch('http://localhost:3002/api/blocked/by-client', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -139,7 +205,7 @@ const QueueHistory: React.FC = () => {
 
   const handleUnblock = (id: number) => {
     if (confirm('Desbloquear este item?')) {
-      fetch(`http://localhost:3001/api/blocked/${id}`, {
+      fetch(`http://localhost:3002/api/blocked/${id}`, {
         method: 'DELETE'
       })
         .then(() => fetchData())
@@ -229,139 +295,175 @@ const QueueHistory: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Fila & Histórico</h1>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Queue List */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex flex-col gap-4 mb-4">
-              <div className="flex justify-between items-center">
-                <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200">Fila de Envios</h2>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => generateTest('reminder')}
-                    className="px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors flex items-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-sm">science</span>
-                    Gerar Teste (Lembrete)
-                  </button>
-                  <button
-                    onClick={() => generateTest('overdue')}
-                    className="px-3 py-2 bg-orange-600 text-white text-sm rounded hover:bg-orange-700 transition-colors flex items-center gap-2"
-                  >
-                    <span className="material-symbols-outlined text-sm">science</span>
-                    Gerar Teste (Atraso)
-                  </button>
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200">Fila & Histórico</h2>
+
+                {/* Send Mode Toggle */}
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-gray-600 dark:text-gray-400">Modo:</span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={sendMode === 'manual'}
+                      onChange={(e) => setSendMode(e.target.checked ? 'manual' : 'queue')}
+                    />
+                    <div className="w-20 h-8 bg-green-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-12 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-7 after:w-7 after:transition-all dark:border-gray-600 peer-checked:bg-orange-400"></div>
+                  </label>
+                  <span className={`text-sm font-medium ${sendMode === 'queue' ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                    {sendMode === 'queue' ? '🟢 Fila' : '🔶 Manual'}
+                  </span>
                 </div>
               </div>
 
-              {/* Search and Filters */}
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-col md:flex-row gap-3">
-                  <input
-                    type="text"
-                    placeholder="Buscar por nome, código ou CPF..."
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setFilterStatus('todos')}
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'todos' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
-                    >
-                      Todos
-                    </button>
-                    <button
-                      onClick={() => setFilterStatus('pendente')}
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'pendente' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
-                    >
-                      Pendentes
-                    </button>
-                    <button
-                      onClick={() => setFilterStatus('erro')}
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'erro' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
-                    >
-                      Erros
-                    </button>
-                  </div>
-                </div>
-
-                {/* Date Filters */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="flex gap-2 items-center">
-                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">Emissão:</label>
-                    <input
-                      type="date"
-                      className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                      value={emissionDateStart}
-                      onChange={(e) => setEmissionDateStart(e.target.value)}
-                    />
-                    <span className="text-gray-400">-</span>
-                    <input
-                      type="date"
-                      className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                      value={emissionDateEnd}
-                      onChange={(e) => setEmissionDateEnd(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex gap-2 items-center">
-                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">Vencimento:</label>
-                    <input
-                      type="date"
-                      className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                      value={dueDateStart}
-                      onChange={(e) => setDueDateStart(e.target.value)}
-                    />
-                    <span className="text-gray-400">-</span>
-                    <input
-                      type="date"
-                      className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                      value={dueDateEnd}
-                      onChange={(e) => setDueDateEnd(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                {/* Sorting Buttons */}
-                <div className="flex gap-2 items-center flex-wrap">
-                  <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Ordenar por:</span>
-                  {(['code', 'name', 'dueDate', 'value', 'status'] as const).map((field) => (
-                    <button
-                      key={field}
-                      onClick={() => {
-                        if (sortBy === field) {
-                          setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-                        } else {
-                          setSortBy(field);
-                          setSortOrder('asc');
-                        }
-                      }}
-                      className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${sortBy === field
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-                        }`}
-                    >
-                      {field === 'code' && 'Código'}
-                      {field === 'name' && 'Nome'}
-                      {field === 'dueDate' && 'Vencimento'}
-                      {field === 'value' && 'Valor'}
-                      {field === 'status' && 'Status'}
-                      {sortBy === field && (
-                        <span className="material-symbols-outlined text-xs">
-                          {sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
+              {/* Generation Buttons */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={generateReminders}
+                  className="px-4 py-2 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 transition-colors flex items-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-sm">notifications</span>
+                  Gerar Lembretes
+                </button>
+                <button
+                  onClick={generateOverdue}
+                  className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors flex items-center gap-2"
+                >
+                  <span className="material-symbols-outlined text-sm">warning</span>
+                  Gerar Vencidos
+                </button>
+                <button
+                  onClick={openManualBatchModal}
+                  className="px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition-colors flex items-center gap-2 font-semibold"
+                >
+                  <span className="material-symbols-outlined text-sm">inventory_2</span>
+                  Gerar Lote Manual
+                </button>
               </div>
+
+              {/* Mode Info */}
+              {sendMode === 'manual' && (
+                <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded p-2">
+                  <p className="text-xs text-orange-800 dark:text-orange-300">
+                    ℹ️ Modo Manual ativo: mensagens serão exibidas para preview antes do envio.
+                  </p>
+                </div>
+              )}
             </div>
 
-            <div className="overflow-x-auto">
+            {/* Search and Filters */}
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col md:flex-row gap-3">
+                <input
+                  type="text"
+                  placeholder="Buscar por nome, código ou CPF..."
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setFilterStatus('todos')}
+                    className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'todos' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
+                  >
+                    Todos
+                  </button>
+                  <button
+                    onClick={() => setFilterStatus('pendente')}
+                    className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'pendente' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
+                  >
+                    Pendentes
+                  </button>
+                  <button
+                    onClick={() => setFilterStatus('erro')}
+                    className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'erro' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
+                  >
+                    Erros
+                  </button>
+                </div>
+              </div>
+
+              {/* Date Filters */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="flex gap-2 items-center">
+                  <label className="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">Emissão:</label>
+                  <input
+                    type="date"
+                    className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    value={emissionDateStart}
+                    onChange={(e) => setEmissionDateStart(e.target.value)}
+                  />
+                  <span className="text-gray-400">-</span>
+                  <input
+                    type="date"
+                    className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    value={emissionDateEnd}
+                    onChange={(e) => setEmissionDateEnd(e.target.value)}
+                  />
+                </div>
+                <div className="flex gap-2 items-center">
+                  <label className="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">Vencimento:</label>
+                  <input
+                    type="date"
+                    className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    value={dueDateStart}
+                    onChange={(e) => setDueDateStart(e.target.value)}
+                  />
+                  <span className="text-gray-400">-</span>
+                  <input
+                    type="date"
+                    className="flex-1 px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    value={dueDateEnd}
+                    onChange={(e) => setDueDateEnd(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Sorting Buttons */}
+              <div className="flex gap-2 items-center flex-wrap">
+                <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Ordenar por:</span>
+                {(['code', 'name', 'dueDate', 'value', 'status'] as const).map((field) => (
+                  <button
+                    key={field}
+                    onClick={() => {
+                      if (sortBy === field) {
+                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                      } else {
+                        setSortBy(field);
+                        setSortOrder('asc');
+                      }
+                    }}
+                    className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${sortBy === field
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+                      }`}
+                  >
+                    {field === 'code' && 'Código'}
+                    {field === 'name' && 'Nome'}
+                    {field === 'dueDate' && 'Vencimento'}
+                    {field === 'value' && 'Valor'}
+                    {field === 'status' && 'Status'}
+                    {sortBy === field && (
+                      <span className="material-symbols-outlined text-xs">
+                        {sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Queue Table with Scrolling */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
               <table className="w-full text-sm text-left">
-                <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300">
+                <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300 sticky top-0">
                   <tr>
                     <th className="px-4 py-3">Código</th>
                     <th className="px-4 py-3">Cliente</th>
@@ -456,8 +558,8 @@ const QueueHistory: React.FC = () => {
           </div>
         </div>
 
-        {/* Blocked List */}
-        <div className="space-y-6">
+        {/* Blocked List - Right Sidebar */}
+        <div className="lg:col-span-1 space-y-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200">Lista Negativa</h2>
             <div className="space-y-3 max-h-[600px] overflow-y-auto">
@@ -654,8 +756,117 @@ const QueueHistory: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Manual Batch Warning Modal */}
+      {showManualWarning && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                <span className="material-symbols-outlined text-orange-500">warning</span>
+                Atenção: Geração Manual
+              </h3>
+            </div>
+            <div className="p-6">
+              <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4 mb-4">
+                <p className="text-sm text-orange-800 dark:text-orange-300">
+                  A geração manual ignora as verificações de envio automático de hoje. Isso pode resultar em mensagens duplicadas se o sistema automático já tiver rodado.
+                </p>
+              </div>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Selecione os tipos de mensagem que deseja gerar:
+              </p>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 p-2 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedBatchTypes?.includes('reminder') || false}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedBatchTypes([...selectedBatchTypes, 'reminder']);
+                      } else {
+                        setSelectedBatchTypes(selectedBatchTypes.filter(t => t !== 'reminder'));
+                      }
+                    }}
+                    className="rounded text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Lembretes de Vencimento</span>
+                </label>
+                <label className="flex items-center gap-2 p-2 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedBatchTypes?.includes('overdue') || false}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedBatchTypes([...selectedBatchTypes, 'overdue']);
+                      } else {
+                        setSelectedBatchTypes(selectedBatchTypes.filter(t => t !== 'overdue'));
+                      }
+                    }}
+                    className="rounded text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Avisos de Atraso</span>
+                </label>
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+              <button
+                onClick={() => setShowManualWarning(false)}
+                className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleManualBatchConfirm}
+                className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+              >
+                Confirmar Geração
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-export default QueueHistory;
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
+  state = { hasError: false, error: null };
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4 bg-red-50 border border-red-200 rounded text-red-800 m-4">
+          <h2 className="text-lg font-bold mb-2">Algo deu errado na exibição deste componente.</h2>
+          <p className="font-mono text-xs bg-white p-2 rounded border border-red-100 mb-4">
+            {this.state.error?.toString()}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Recarregar Página
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default function QueueHistoryWithBoundary() {
+  return (
+    <ErrorBoundary>
+      <QueueHistory />
+    </ErrorBoundary>
+  );
+}
