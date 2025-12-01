@@ -45,7 +45,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
   return (
     <div className="flex min-h-screen w-full bg-gray-100 dark:bg-gray-900">
       {/* Sidebar */}
-      <aside className="hidden lg:flex w-64 flex-col bg-gray-900 text-white">
+      <aside className="hidden lg:flex w-48 flex-col bg-gray-900 text-white">
         <div className="flex h-16 items-center px-6 border-b border-gray-800">
           <span className="text-lg font-bold">Gestão de Cobranças</span>
         </div>

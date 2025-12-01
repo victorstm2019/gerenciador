@@ -65,19 +65,62 @@ db.serialize(() => {
     }
   });
 
-  // Queue Items Table
+  // Queue Items Table - Expanded for send queue management
   db.run(`CREATE TABLE IF NOT EXISTS queue_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_code TEXT,
     client_name TEXT,
+    cpf TEXT,
+    phone TEXT,
+    installment_id TEXT,
     installment_value TEXT,
     due_date TEXT,
     scheduled_date TEXT,
     sent_date TEXT,
     error_date TEXT,
-    code TEXT,
-    cpf TEXT,
-    status TEXT
+    status TEXT DEFAULT 'PENDING',
+    message_content TEXT,
+    message_type TEXT,
+    send_mode TEXT DEFAULT 'AUTO',
+    selected_for_send INTEGER DEFAULT 0,
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  // Add new columns to queue_items if they don't exist
+  db.all("PRAGMA table_info(queue_items)", (err, columns) => {
+    if (!err) {
+      const columnNames = columns.map(col => col.name);
+
+      if (!columnNames.includes('client_code')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN client_code TEXT");
+      }
+      if (!columnNames.includes('phone')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN phone TEXT");
+      }
+      if (!columnNames.includes('installment_id')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN installment_id TEXT");
+      }
+      if (!columnNames.includes('message_content')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN message_content TEXT");
+      }
+      if (!columnNames.includes('message_type')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN message_type TEXT");
+      }
+      if (!columnNames.includes('send_mode')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN send_mode TEXT DEFAULT 'AUTO'");
+      }
+      if (!columnNames.includes('selected_for_send')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN selected_for_send INTEGER DEFAULT 0");
+      }
+      if (!columnNames.includes('error_message')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN error_message TEXT");
+      }
+      if (!columnNames.includes('created_at')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP");
+      }
+    }
+  });
 
   // Seed Queue if empty (for demo purposes)
   db.get("SELECT count(*) as count FROM queue_items", (err, row) => {
@@ -93,6 +136,18 @@ db.serialize(() => {
       console.log("Default queue items inserted.");
     }
   });
+
+  // Error Logs Table
+  db.run(`CREATE TABLE IF NOT EXISTS error_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    data_hora DATETIME DEFAULT CURRENT_TIMESTAMP,
+    tipo TEXT NOT NULL,
+    mensagem TEXT NOT NULL,
+    detalhes TEXT,
+    client_code TEXT,
+    phone TEXT
+  )`);
+
 
   // Blocked Clients Table
   db.run(`CREATE TABLE IF NOT EXISTS blocked_clients (

@@ -39,9 +39,17 @@ const QueueHistory: React.FC = () => {
   const [blockReason, setBlockReason] = useState('');
 
   // New manual generation states
-  const [sendMode, setSendMode] = useState<'queue' | 'manual'>('queue'); // padrão: fila
+  const [sendMode, setSendMode] = useState<'queue' | 'manual'>(() => {
+    const saved = localStorage.getItem('sendMode');
+    return (saved === 'queue' || saved === 'manual') ? saved : 'queue';
+  });
   const [showManualWarning, setShowManualWarning] = useState(false);
   const [selectedBatchTypes, setSelectedBatchTypes] = useState<('reminder' | 'overdue')[]>([]);
+
+  // Selection states FOR MANUAL MODE
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [selectAll, setSelectAll] = useState(false);
+  const [sending, setSending] = useState(false);
 
   // Sorting and filtering states
   const [sortBy, setSortBy] = useState<'code' | 'name' | 'dueDate' | 'value' | 'status'>('code');
@@ -50,6 +58,11 @@ const QueueHistory: React.FC = () => {
   const [emissionDateEnd, setEmissionDateEnd] = useState('');
   const [dueDateStart, setDueDateStart] = useState('');
   const [dueDateEnd, setDueDateEnd] = useState('');
+
+  // Save sendMode to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('sendMode', sendMode);
+  }, [sendMode]);
 
   useEffect(() => {
     fetchData();
@@ -72,23 +85,48 @@ const QueueHistory: React.FC = () => {
       });
   };
 
+  const generateAndAddToQueue = (messageType: 'reminder' | 'overdue') => {
+    setLoading(true);
+    // 1. Generate the messages (preview)
+    fetch('http://localhost:3002/api/queue/generate-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageType, limit: 100 })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          // 2. Add them to the queue
+          return fetch('http://localhost:3002/api/queue/add-items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: data, send_mode: sendMode.toUpperCase() })
+          });
+        } else {
+          throw new Error('Resposta inválida da API ao gerar');
+        }
+      })
+      .then(res => res.json())
+      .then(result => {
+        setLoading(false);
+        alert(`${result.count} itens adicionados à fila com sucesso!`);
+        fetchData(); // Refresh the table
+      })
+      .catch(err => {
+        setLoading(false);
+        alert('Erro ao gerar e adicionar à fila: ' + err);
+      });
+  };
+
   const generateReminders = () => {
-    if (sendMode === 'manual') {
-      // In manual mode, we just preview
-      generateTest('reminder');
-    } else {
-      // In queue mode, we might want to confirm or just add to queue
-      // For now, let's use the same test generation but maybe with a different flag if needed
-      // Or simply warn that this is manual generation
-      generateTest('reminder');
+    if (confirm('Gerar e adicionar lembretes à fila?')) {
+      generateAndAddToQueue('reminder');
     }
   };
 
   const generateOverdue = () => {
-    if (sendMode === 'manual') {
-      generateTest('overdue');
-    } else {
-      generateTest('overdue');
+    if (confirm('Gerar e adicionar mensagens de atraso à fila?')) {
+      generateAndAddToQueue('overdue');
     }
   };
 
@@ -126,6 +164,92 @@ const QueueHistory: React.FC = () => {
         setLoading(false);
         alert('Erro ao gerar lote: ' + err);
       });
+  };
+
+  const handleSelectItem = (id: string) => {
+    const newSelected = new Set(selectedItems);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedItems(newSelected);
+    setSelectAll(false);
+  };
+
+  const handleSelectAll = () => {
+    if (selectAll) {
+      setSelectedItems(new Set());
+      setSelectAll(false);
+    } else {
+      const allIds = new Set(filteredQueue.filter(item => item.status === 'PENDING').map(item => item.id));
+      setSelectedItems(allIds);
+      setSelectAll(true);
+    }
+  };
+
+  const handleSendSelected = () => {
+    if (selectedItems.size === 0) {
+      alert('Por favor, selecione pelo menos um item para enviar');
+      return;
+    }
+
+    if (!confirm(`Enviar ${selectedItems.size} mensagens selecionadas?`)) {
+      return;
+    }
+
+    setSending(true);
+
+    Promise.all(
+      Array.from(selectedItems).map(id =>
+        fetch(`http://localhost:3002/api/queue/items/${id}/select`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ selected: true })
+        })
+      )
+    )
+      .then(() => {
+        return fetch('http://localhost:3002/api/queue/send-selected', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+      })
+      .then(res => res.json())
+      .then(result => {
+        setSending(false);
+        setSelectedItems(new Set());
+        setSelectAll(false);
+        alert(`Enviado: ${result.sent} mensagens\nErros: ${result.errors}`);
+        fetchData();
+      })
+      .catch(err => {
+        setSending(false);
+        alert('Erro ao enviar: ' + err);
+      });
+  };
+
+
+
+  const formatCurrency = (value: string | number | undefined) => {
+    if (!value) return 'R$ 0,00';
+    const num = typeof value === 'string' ? parseFloat(value) : value;
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num);
+  };
+
+  const parseBrazilianDate = (dateStr: string | undefined) => {
+    if (!dateStr) return '-';
+    // If already in dd/MM/yyyy format, return as is
+    if (dateStr.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+      return dateStr;
+    }
+    // Otherwise try to parse and format
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('pt-BR');
+    } catch {
+      return dateStr;
+    }
   };
 
   const generateTest = (messageType: 'reminder' | 'overdue') => {
@@ -295,9 +419,9 @@ const QueueHistory: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Queue List */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-4 space-y-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex flex-col gap-4 mb-4">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -465,6 +589,17 @@ const QueueHistory: React.FC = () => {
               <table className="w-full text-sm text-left">
                 <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300 sticky top-0">
                   <tr>
+                    {sendMode === 'manual' && (
+                      <th className="px-4 py-3 w-12">
+                        <input
+                          type="checkbox"
+                          checked={selectAll}
+                          onChange={handleSelectAll}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          title="Selecionar todos os itens pendentes"
+                        />
+                      </th>
+                    )}
                     <th className="px-4 py-3">Código</th>
                     <th className="px-4 py-3">Cliente</th>
                     <th className="px-4 py-3">Vencimento</th>
@@ -483,6 +618,20 @@ const QueueHistory: React.FC = () => {
                         setShowMessageModal(true);
                       }}
                     >
+                      {sendMode === 'manual' && (
+                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                          {item.status === 'PENDING' ? (
+                            <input
+                              type="checkbox"
+                              checked={selectedItems.has(item.id)}
+                              onChange={() => handleSelectItem(item.id)}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            />
+                          ) : (
+                            <div className="w-4"></div>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{item.code}</td>
                       <td className="px-4 py-3">
                         <div>
@@ -491,9 +640,9 @@ const QueueHistory: React.FC = () => {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                        {item.dueDate ? new Date(item.dueDate).toLocaleDateString('pt-BR') : '-'}
+                        {parseBrazilianDate(item.dueDate)}
                       </td>
-                      <td className="px-4 py-3 font-medium">R$ {item.installmentValue}</td>
+                      <td className="px-4 py-3 font-medium">{formatCurrency(item.installmentValue)}</td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs ${item.status === 'SENT' ? 'bg-green-100 text-green-800' :
                           item.status === 'ERROR' ? 'bg-red-100 text-red-800' :
@@ -547,7 +696,7 @@ const QueueHistory: React.FC = () => {
                   ))}
                   {filteredQueue.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                      <td colSpan={sendMode === 'manual' ? 7 : 6} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                         Nenhum item encontrado.
                       </td>
                     </tr>
@@ -556,18 +705,37 @@ const QueueHistory: React.FC = () => {
               </table>
             </div>
           </div>
+
+          {/* Botão Enviar Selecionados */}
+          {sendMode === 'manual' && selectedItems.size > 0 && (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mt-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">
+                  <strong>{selectedItems.size}</strong> item(ns) selecionado(s)
+                </span>
+                <button
+                  onClick={handleSendSelected}
+                  disabled={sending}
+                  className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span className="material-symbols-outlined text-sm">send</span>
+                  {sending ? 'Enviando...' : `Enviar Selecionados (${selectedItems.size})`}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Blocked List - Right Sidebar */}
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4 text-gray-700 dark:text-gray-200">Lista Negativa</h2>
+            <h2 className="text-sm font-semibold mb-4 text-gray-700 dark:text-gray-200">Lista Negativa</h2>
             <div className="space-y-3 max-h-[600px] overflow-y-auto">
               {blocked.map((item) => (
                 <div key={item.id} className="p-3 border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900 flex justify-between items-start">
                   <div>
-                    <p className="font-medium text-gray-900 dark:text-white">{item.client_name}</p>
-                    <p className="text-xs text-gray-500">{item.reason}</p>
+                    <p className="font-medium text-xs text-gray-900 dark:text-white">{item.client_name}</p>
+                    <p className="text-[10px] text-gray-500">{item.reason}</p>
                     <div className="flex gap-2 mt-1">
                       {item.block_type && (
                         <span className={`text-[10px] px-2 py-0.5 rounded ${item.block_type === 'client'
@@ -590,7 +758,7 @@ const QueueHistory: React.FC = () => {
                 </div>
               ))}
               {blocked.length === 0 && (
-                <p className="text-sm text-gray-500 text-center py-4">Nenhum cliente bloqueado.</p>
+                <p className="text-xs text-gray-500 text-center py-4">Nenhum cliente bloqueado.</p>
               )}
             </div>
           </div>
@@ -618,7 +786,7 @@ const QueueHistory: React.FC = () => {
                       <div>
                         <p className="font-semibold text-gray-900 dark:text-white">{msg.clientName}</p>
                         <p className="text-xs text-gray-500">Código: {msg.code} | CPF: {msg.cpf}</p>
-                        <p className="text-xs text-gray-500">Vencimento: {new Date(msg.dueDate).toLocaleDateString('pt-BR')} | Valor: R$ {msg.value}</p>
+                        <p className="text-xs text-gray-500">Vencimento: {parseBrazilianDate(msg.dueDate)} | Valor: {formatCurrency(msg.installmentValue)}</p>
                       </div>
                       <span className={`px-2 py-1 rounded text-xs ${msg.messageType === 'reminder' ? 'bg-blue-100 text-blue-800' : 'bg-orange-100 text-orange-800'
                         }`}>
@@ -671,12 +839,12 @@ const QueueHistory: React.FC = () => {
                   <div>
                     <p className="text-gray-500 dark:text-gray-400">Vencimento</p>
                     <p className="font-medium text-gray-900 dark:text-white">
-                      {selectedMessage.dueDate ? new Date(selectedMessage.dueDate).toLocaleDateString('pt-BR') : '-'}
+                      {parseBrazilianDate(selectedMessage.dueDate)}
                     </p>
                   </div>
                   <div>
                     <p className="text-gray-500 dark:text-gray-400">Valor</p>
-                    <p className="font-medium text-gray-900 dark:text-white">R$ {selectedMessage.installmentValue}</p>
+                    <p className="font-medium text-gray-900 dark:text-white">{formatCurrency(selectedMessage.installmentValue)}</p>
                   </div>
                 </div>
               </div>

@@ -705,9 +705,12 @@ app.post('/api/queue/generate-test', async (req, res) => {
                     code: client.codigocliente,
                     clientName: client.nomecliente,
                     cpf: client.cpfcliente,
+                    phone: client.fone1 || client.fone2,
                     dueDate: client.vencimento,
+                    installmentValue: client.valorfinalparcela || client.valorbrutoparcela || 0,
                     value: client.valorfinalparcela || client.valorbrutoparcela || 0,
                     messageContent: message,
+                    messageType: messageType,
                     messageType: messageType,
                     status: 'PREVIEW'
                 };
@@ -1001,6 +1004,559 @@ app.post('/api/blocked/by-client', (req, res) => {
         });
     });
 });
+
+// --- Queue Management API ---
+
+// Get queue items with filters
+app.get('/api/queue/items', (req, res) => {
+    const { status, date_from, date_to } = req.query;
+    let query = "SELECT * FROM queue_items WHERE 1=1";
+    const params = [];
+
+    if (status && status !== 'todos') {
+        query += " AND status = ?";
+        params.push(status.toUpperCase());
+    }
+
+    if (date_from) {
+        query += " AND DATE(created_at) >= DATE(?)";
+        params.push(date_from);
+    }
+
+    if (date_to) {
+        query += " AND DATE(created_at) <= DATE(?)";
+        params.push(date_to);
+    }
+
+    query += " ORDER BY created_at DESC";
+
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        const mappedRows = (rows || []).map(row => ({
+            id: row.id,
+            code: row.client_code || row.code,
+            clientName: row.client_name,
+            cpf: row.cpf,
+            phone: row.phone,
+            installmentValue: row.installment_value,
+            value: row.installment_value, // for compatibility
+            dueDate: row.due_date,
+            messageContent: row.message_content,
+            messageType: row.message_type,
+            status: row.status,
+            sendMode: row.send_mode,
+            createdAt: row.created_at
+        }));
+        res.json(mappedRows);
+    });
+});
+
+// Get today's queue items
+app.get('/api/queue/today', (req, res) => {
+    const query = `SELECT * FROM queue_items 
+                   WHERE DATE(created_at) = DATE('now') 
+                   ORDER BY created_at DESC`;
+
+    db.all(query, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        const mappedRows = (rows || []).map(row => ({
+            id: row.id,
+            code: row.client_code || row.code,
+            clientName: row.client_name,
+            cpf: row.cpf,
+            phone: row.phone,
+            installmentValue: row.installment_value,
+            value: row.installment_value, // for compatibility
+            dueDate: row.due_date,
+            messageContent: row.message_content,
+            messageType: row.message_type,
+            status: row.status,
+            sendMode: row.send_mode,
+            createdAt: row.created_at
+        }));
+        res.json(mappedRows);
+    });
+});
+
+// Get blocked clients
+app.get('/api/blocked', (req, res) => {
+    db.all("SELECT * FROM blocked_clients ORDER BY created_at DESC", (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows || []);
+    });
+});
+
+// Delete blocked client
+app.delete('/api/blocked/:id', (req, res) => {
+    const { id } = req.params;
+    db.run("DELETE FROM blocked_clients WHERE id = ?", [id], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "Bloqueio removido", changes: this.changes });
+    });
+});
+
+// Add items to queue (from generate-batch)
+app.post('/api/queue/add-items', async (req, res) => {
+    const { items, send_mode } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+        res.status(400).json({ error: "Items array is required" });
+        return;
+    }
+
+    try {
+        let inserted = 0;
+        let skipped = 0;
+
+        for (const item of items) {
+            // Check if item already exists (same client, installment, type, and pending)
+            const existing = await new Promise((resolve, reject) => {
+                db.get(
+                    `SELECT id FROM queue_items 
+                     WHERE client_code = ? 
+                     AND installment_id = ? 
+                     AND message_type = ? 
+                     AND status = 'PENDING'`,
+                    [item.code, item.id, item.messageType],
+                    (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    }
+                );
+            });
+
+            if (existing) {
+                skipped++;
+                continue; // Skip duplicate
+            }
+
+            // Insert new item
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT INTO queue_items (
+                        client_code, client_name, cpf, phone, installment_id,
+                        installment_value, due_date, message_content, message_type,
+                        send_mode, status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', CURRENT_TIMESTAMP)`,
+                    [
+                        item.code,
+                        item.clientName,
+                        item.cpf,
+                        item.phone || item.fone1 || item.fone2,
+                        item.id,
+                        typeof item.installmentValue === 'number'
+                            ? item.installmentValue.toFixed(2)
+                            : item.installmentValue,
+                        item.dueDate,
+                        item.messageContent,
+                        item.messageType,
+                        send_mode || 'MANUAL'
+                    ],
+                    function (err) {
+                        if (err) reject(err);
+                        else {
+                            inserted++;
+                            resolve();
+                        }
+                    }
+                );
+            });
+        }
+
+        res.json({
+            message: "Items processed",
+            inserted,
+            skipped,
+            total: items.length
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Toggle item selection
+app.put('/api/queue/items/:id/select', (req, res) => {
+    const { id } = req.params;
+    const { selected } = req.body;
+
+    db.run(
+        "UPDATE queue_items SET selected_for_send = ? WHERE id = ?",
+        [selected ? 1 : 0, id],
+        function (err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({ message: "Selection updated", changes: this.changes });
+        }
+    );
+});
+
+// Helper function to send message via W-API
+async function sendMessageViaWAPI(phone, message) {
+    // Get W-API config
+    const wapiConfig = await new Promise((resolve, reject) => {
+        db.get("SELECT * FROM wapi_config ORDER BY id DESC LIMIT 1", (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+
+    if (!wapiConfig || !wapiConfig.instance_id || !wapiConfig.bearer_token) {
+        throw new Error("W-API not configured");
+    }
+
+    const fetch = (await import('node-fetch')).default;
+    const url = `https://w-api.izy.one/message/sendText/${wapiConfig.instance_id}`;
+
+    // Clean phone number (remove non-digits)
+    const cleanPhone = phone.replace(/\D/g, '');
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${wapiConfig.bearer_token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            phone: cleanPhone,
+            message: message
+        })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.message || `W-API error: ${response.status}`);
+    }
+
+    return data;
+}
+
+// Helper function to log error
+function logError(tipo, mensagem, detalhes, client_code, phone) {
+    db.run(
+        "INSERT INTO error_logs (tipo, mensagem, detalhes, client_code, phone) VALUES (?, ?, ?, ?, ?)",
+        [tipo, mensagem, detalhes, client_code, phone],
+        (err) => {
+            if (err) {
+                console.error("Error logging error:", err);
+            }
+        }
+    );
+}
+
+// Send selected items
+app.post('/api/queue/send-selected', async (req, res) => {
+    try {
+        // Get selected items
+        const items = await new Promise((resolve, reject) => {
+            db.all(
+                "SELECT * FROM queue_items WHERE selected_for_send = 1 AND status = 'PENDING'",
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
+        });
+
+        if (items.length === 0) {
+            res.status(400).json({ error: "No items selected" });
+            return;
+        }
+
+        let sent = 0;
+        let errors = 0;
+        const results = [];
+
+        for (const item of items) {
+            try {
+                // Check if phone exists
+                if (!item.phone) {
+                    throw new Error("Phone number not available");
+                }
+
+                // Send message
+                await sendMessageViaWAPI(item.phone, item.message_content);
+
+                // Update status
+                db.run(
+                    "UPDATE queue_items SET status = 'SENT', sent_date = CURRENT_TIMESTAMP WHERE id = ?",
+                    [item.id]
+                );
+
+                sent++;
+                results.push({ id: item.id, success: true });
+            } catch (error) {
+                // Log error
+                logError(
+                    'envio',
+                    `Erro ao enviar para ${item.client_name}`,
+                    error.message,
+                    item.client_code,
+                    item.phone
+                );
+
+                // Update status
+                db.run(
+                    "UPDATE queue_items SET status = 'ERROR', error_date = CURRENT_TIMESTAMP, error_message = ? WHERE id = ?",
+                    [error.message, item.id]
+                );
+
+                errors++;
+                results.push({ id: item.id, success: false, error: error.message });
+            }
+        }
+
+        res.json({
+            message: `Sent ${sent} messages, ${errors} errors`,
+            sent,
+            errors,
+            results
+        });
+
+    } catch (error) {
+        console.error("Error sending selected items:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get error logs
+app.get('/api/logs', (req, res) => {
+    db.all("SELECT * FROM error_logs ORDER BY data_hora DESC LIMIT 100", (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows || []);
+    });
+});
+
+// Toggle item selection
+app.put('/api/queue/items/:id/select', (req, res) => {
+    const { id } = req.params;
+    const { selected } = req.body;
+
+    db.run(
+        "UPDATE queue_items SET selected_for_send = ? WHERE id = ?",
+        [selected ? 1 : 0, id],
+        function (err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({ message: "Selection updated", changes: this.changes });
+        }
+    );
+});
+
+// Helper function to send message via W-API
+async function sendMessageViaWAPI(phone, message) {
+    // Get W-API config
+    const wapiConfig = await new Promise((resolve, reject) => {
+        db.get("SELECT * FROM wapi_config ORDER BY id DESC LIMIT 1", (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+
+    if (!wapiConfig || !wapiConfig.instance_id || !wapiConfig.bearer_token) {
+        throw new Error("W-API not configured");
+    }
+
+    const fetch = (await import('node-fetch')).default;
+    const url = `https://w-api.izy.one/message/sendText/${wapiConfig.instance_id}`;
+
+    // Clean phone number (remove non-digits)
+    const cleanPhone = phone.replace(/\D/g, '');
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${wapiConfig.bearer_token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            phone: cleanPhone,
+            message: message
+        })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.message || `W-API error: ${response.status}`);
+    }
+
+    return data;
+}
+
+// Helper function to log error
+function logError(tipo, mensagem, detalhes, client_code, phone) {
+    db.run(
+        "INSERT INTO error_logs (tipo, mensagem, detalhes, client_code, phone) VALUES (?, ?, ?, ?, ?)",
+        [tipo, mensagem, detalhes, client_code, phone],
+        (err) => {
+            if (err) {
+                console.error("Error logging error:", err);
+            }
+        }
+    );
+}
+
+// Send selected items
+app.post('/api/queue/send-selected', async (req, res) => {
+    try {
+        // Get selected items
+        const items = await new Promise((resolve, reject) => {
+            db.all(
+                "SELECT * FROM queue_items WHERE selected_for_send = 1 AND status = 'PENDING'",
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
+        });
+
+        if (items.length === 0) {
+            res.status(400).json({ error: "No items selected" });
+            return;
+        }
+
+        let sent = 0;
+        let errors = 0;
+        const results = [];
+
+        for (const item of items) {
+            try {
+                // Check if phone exists
+                if (!item.phone) {
+                    throw new Error("Phone number not available");
+                }
+
+                // Send message
+                await sendMessageViaWAPI(item.phone, item.message_content);
+
+                // Update status
+                db.run(
+                    "UPDATE queue_items SET status = 'SENT', sent_date = CURRENT_TIMESTAMP WHERE id = ?",
+                    [item.id]
+                );
+
+                sent++;
+                results.push({ id: item.id, success: true });
+            } catch (error) {
+                // Log error
+                logError(
+                    'envio',
+                    `Erro ao enviar para ${item.client_name}`,
+                    error.message,
+                    item.client_code,
+                    item.phone
+                );
+
+                // Update status
+                db.run(
+                    "UPDATE queue_items SET status = 'ERROR', error_date = CURRENT_TIMESTAMP, error_message = ? WHERE id = ?",
+                    [error.message, item.id]
+                );
+
+                errors++;
+                results.push({ id: item.id, success: false, error: error.message });
+            }
+        }
+
+        res.json({
+            message: `Sent ${sent} messages, ${errors} errors`,
+            sent,
+            errors,
+            results
+        });
+
+    } catch (error) {
+        console.error("Error sending selected items:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get error logs
+app.get('/api/logs', (req, res) => {
+    db.all("SELECT * FROM error_logs ORDER BY data_hora DESC LIMIT 100", (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows || []);
+    });
+});
+
+// --- Scheduler for Automatic Generation ---
+const SCHEDULER_INTERVAL = 60 * 60 * 1000; // Check every hour
+// const SCHEDULER_INTERVAL = 60 * 1000; // DEBUG: Check every minute
+
+setInterval(async () => {
+    console.log("Scheduler: Checking for automatic message generation...");
+
+    // Only run if there are active configurations for auto-generation
+    // For now, we'll assume we want to generate daily reminders/overdue
+    // Ideally, this should be configurable in the database
+
+    try {
+        // 1. Generate Reminders
+        const remindersResponse = await fetch('http://localhost:3002/api/queue/generate-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messageType: 'reminder', limit: 50 }) // Reasonable limit per run
+        });
+
+        if (remindersResponse.ok) {
+            const reminders = await remindersResponse.json();
+            if (reminders.length > 0) {
+                await fetch('http://localhost:3002/api/queue/add-items', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items: reminders, send_mode: 'AUTO' })
+                });
+                console.log(`Scheduler: Added ${reminders.length} reminders to queue.`);
+            }
+        }
+
+        // 2. Generate Overdue
+        const overdueResponse = await fetch('http://localhost:3002/api/queue/generate-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messageType: 'overdue', limit: 50 })
+        });
+
+        if (overdueResponse.ok) {
+            const overdue = await overdueResponse.json();
+            if (overdue.length > 0) {
+                await fetch('http://localhost:3002/api/queue/add-items', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items: overdue, send_mode: 'AUTO' })
+                });
+                console.log(`Scheduler: Added ${overdue.length} overdue items to queue.`);
+            }
+        }
+
+    } catch (error) {
+        console.error("Scheduler Error:", error);
+    }
+
+}, SCHEDULER_INTERVAL);
 
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
