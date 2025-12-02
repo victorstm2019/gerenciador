@@ -505,10 +505,10 @@ const QueueHistory: React.FC = () => {
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
-                                <div className="flex flex-wrap items-center gap-4">
+                                <div className="flex flex-wrap items-end gap-4">
                                     {/* Status Filters Group */}
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Status:</span>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Status</span>
                                         <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
                                             <button
                                                 onClick={() => setFilterStatus('todos')}
@@ -538,11 +538,11 @@ const QueueHistory: React.FC = () => {
                                     </div>
 
                                     {/* Vertical Separator */}
-                                    <div className="h-8 w-px bg-gray-300 dark:bg-gray-600 hidden md:block"></div>
+                                    <div className="h-8 w-px bg-gray-300 dark:bg-gray-600 hidden md:block mb-1"></div>
 
                                     {/* Type Filters Group */}
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Tipo:</span>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Tipo</span>
                                         <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
                                             <button
                                                 onClick={() => setFilterType('all')}
