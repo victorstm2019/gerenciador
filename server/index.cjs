@@ -1054,10 +1054,9 @@ app.get('/api/queue/items', (req, res) => {
     });
 });
 
-// Get today's queue items
+// Get today's queue items (changed to get all items for better UX)
 app.get('/api/queue/today', (req, res) => {
     const query = `SELECT * FROM queue_items 
-                   WHERE DATE(created_at) = DATE('now') 
                    ORDER BY created_at DESC`;
 
     db.all(query, (err, rows) => {
@@ -1078,7 +1077,9 @@ app.get('/api/queue/today', (req, res) => {
             messageType: row.message_type,
             status: row.status,
             sendMode: row.send_mode,
-            createdAt: row.created_at
+            createdAt: row.created_at,
+            scheduledDate: row.created_at, // Using created_at as emission date
+            created_at: row.created_at
         }));
         res.json(mappedRows);
     });
@@ -1202,6 +1203,27 @@ app.put('/api/queue/items/:id/select', (req, res) => {
             res.json({ message: "Selection updated", changes: this.changes });
         }
     );
+});
+
+// Delete multiple queue items
+app.delete('/api/queue/items/bulk', (req, res) => {
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+        res.status(400).json({ error: "IDs array is required" });
+        return;
+    }
+
+    const placeholders = ids.map(() => '?').join(',');
+    const query = `DELETE FROM queue_items WHERE id IN (${placeholders})`;
+
+    db.run(query, ids, function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "Items deleted", deleted: this.changes });
+    });
 });
 
 // Helper function to send message via W-API
