@@ -1226,6 +1226,19 @@ app.delete('/api/queue/items/bulk', (req, res) => {
     });
 });
 
+// Delete single queue item
+app.delete('/api/queue/:id', (req, res) => {
+    const { id } = req.params;
+
+    db.run('DELETE FROM queue_items WHERE id = ?', [id], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ message: "Item deleted", deleted: this.changes });
+    });
+});
+
 // Helper function to send message via W-API
 async function sendMessageViaWAPI(phone, message) {
     // Get W-API config

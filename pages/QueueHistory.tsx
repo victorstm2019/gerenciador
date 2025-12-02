@@ -7,6 +7,7 @@ interface QueueItem {
     cpf: string;
     installmentValue: string;
     dueDate: string;
+    createdAt?: string;
     scheduledDate?: string;
     sentDate?: string;
     errorDate?: string;
@@ -662,7 +663,7 @@ const QueueHistory: React.FC = () => {
                                                 </div>
                                             </td>
                                             <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                                                {parseBrazilianDate(item.scheduledDate || item.created_at)}
+                                                {parseBrazilianDate(item.createdAt)}
                                             </td>
                                             <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                                                 {parseBrazilianDate(item.dueDate)}
