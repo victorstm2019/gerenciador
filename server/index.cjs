@@ -1304,6 +1304,20 @@ function logError(tipo, mensagem, detalhes, client_code, phone) {
     );
 }
 
+// Helper function to log scheduler events
+function logScheduler(mensagem, detalhes = '') {
+    db.run(
+        "INSERT INTO error_logs (tipo, mensagem, detalhes) VALUES (?, ?, ?)",
+        ['SCHEDULER', mensagem, detalhes],
+        (err) => {
+            if (err) {
+                console.error("Error logging scheduler:", err);
+            }
+        }
+    );
+    console.log(`Scheduler: ${mensagem}`);
+}
+
 // Send selected items
 app.post('/api/queue/send-selected', async (req, res) => {
     try {
@@ -1552,14 +1566,71 @@ app.get('/api/logs', (req, res) => {
 const SCHEDULER_INTERVAL = 60 * 60 * 1000; // Check every hour
 // const SCHEDULER_INTERVAL = 60 * 1000; // DEBUG: Check every minute
 
+// Helper function to get config
+function getConfig() {
+    return new Promise((resolve, reject) => {
+        db.get("SELECT * FROM message_config LIMIT 1", (err, row) => {
+            if (err) reject(err);
+            else resolve(row || {});
+        });
+    });
+}
+
+// Helper function to mark execution
+function markAsExecuted() {
+    return new Promise((resolve, reject) => {
+        db.run(
+            "UPDATE message_config SET last_auto_run = CURRENT_TIMESTAMP WHERE id = 1",
+            (err) => {
+                if (err) reject(err);
+                else {
+                    console.log("Scheduler: Marked as executed for today");
+                    resolve();
+                }
+            }
+        );
+    });
+}
+
 setInterval(async () => {
-    console.log("Scheduler: Checking for automatic message generation...");
-
-    // Only run if there are active configurations for auto-generation
-    // For now, we'll assume we want to generate daily reminders/overdue
-    // Ideally, this should be configurable in the database
-
     try {
+        // 1. Get configuration
+        const config = await getConfig();
+
+        // 2. Check if auto-send is enabled
+        if (!config.auto_send_enabled) {
+            logScheduler("Auto-send desabilitado, aguardando próxima verificação");
+            return;
+        }
+
+        // 3. Check if already executed today
+        const now = new Date();
+        const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
+
+        if (config.last_auto_run) {
+            const lastRunDate = config.last_auto_run.split(' ')[0]; // Extract date part
+            if (lastRunDate === today) {
+                logScheduler("Já executado hoje, aguardando próximo dia", `Última execução: ${config.last_auto_run}`);
+                return;
+            }
+        }
+
+        // 4. Check if current time >= configured time
+        const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+        const configuredTime = config.send_time || '09:00';
+
+        if (currentTime < configuredTime) {
+            logScheduler("Aguardando horário configurado", `Atual: ${currentTime}, Configurado: ${configuredTime}`);
+            return;
+        }
+
+        // 5. Execute automatic generation
+        logScheduler("Iniciando geração automática de mensagens", `Horário: ${currentTime}`);
+
+        // Only run if there are active configurations for auto-generation
+        // For now, we'll assume we want to generate daily reminders/overdue
+        // Ideally, this should be configurable in the database
+
         // 1. Generate Reminders
         const remindersResponse = await fetch('http://localhost:3002/api/queue/generate-test', {
             method: 'POST',
@@ -1575,7 +1646,7 @@ setInterval(async () => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ items: reminders, send_mode: 'AUTO' })
                 });
-                console.log(`Scheduler: Added ${reminders.length} reminders to queue.`);
+                logScheduler(`Lembretes adicionados à fila`, `${reminders.length} itens`);
             }
         }
 
@@ -1594,11 +1665,15 @@ setInterval(async () => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ items: overdue, send_mode: 'AUTO' })
                 });
-                console.log(`Scheduler: Added ${overdue.length} overdue items to queue.`);
+                logScheduler(`Mensagens de vencimento adicionadas à fila`, `${overdue.length} itens`);
             }
         }
 
+        // 6. Mark as executed
+        await markAsExecuted();
+
     } catch (error) {
+        logScheduler("Erro na execução automática", error.message || error.toString());
         console.error("Scheduler Error:", error);
     }
 

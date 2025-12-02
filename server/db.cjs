@@ -62,6 +62,10 @@ db.serialize(() => {
         db.run("ALTER TABLE message_config ADD COLUMN overdue_repeat_interval_days INTEGER DEFAULT 7");
         console.log("Added overdue_repeat_interval_days column to message_config");
       }
+      if (!columnNames.includes('last_auto_run')) {
+        db.run("ALTER TABLE message_config ADD COLUMN last_auto_run DATETIME");
+        console.log("Added last_auto_run column to message_config");
+      }
     }
   });
 

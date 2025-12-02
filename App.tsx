@@ -34,7 +34,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { icon: 'settings_remote', label: 'Conexões & Testes', path: '/connections', perm: 'connections' },
     { icon: 'message', label: 'Mensagens', path: '/messages', perm: 'messages' },
     { icon: 'history', label: 'Fila & Histórico', path: '/queue', perm: 'queue' },
-    { icon: 'bug_report', label: 'Logs de Erro', path: '/logs', perm: 'logs' },
+    { icon: 'bug_report', label: 'Logs', path: '/logs', perm: 'logs' },
     { icon: 'manage_accounts', label: 'Permissões', path: '/permissions', perm: 'permissions' },
   ];
 
