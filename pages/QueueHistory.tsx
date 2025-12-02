@@ -31,7 +31,8 @@ const QueueHistory: React.FC = () => {
     const [queue, setQueue] = useState<QueueItem[]>([]);
     const [blocked, setBlocked] = useState<BlockedClient[]>([]);
     const [loading, setLoading] = useState(true);
-    const [filterStatus, setFilterStatus] = useState('todos');
+    const [filterStatus, setFilterStatus] = useState<'todos' | 'pendente' | 'enviado' | 'erro'>('todos');
+    const [filterType, setFilterType] = useState<'all' | 'reminder' | 'overdue'>('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [showPreview, setShowPreview] = useState(false);
     const [previewMessages, setPreviewMessages] = useState<QueueItem[]>([]);
@@ -257,8 +258,6 @@ const QueueHistory: React.FC = () => {
             });
     };
 
-
-
     const formatCurrency = (value: string | number | undefined) => {
         if (!value) return 'R$ 0,00';
         const num = typeof value === 'string' ? parseFloat(value) : value;
@@ -278,30 +277,6 @@ const QueueHistory: React.FC = () => {
         } catch {
             return dateStr;
         }
-    };
-
-    const generateTest = (messageType: 'reminder' | 'overdue') => {
-        setLoading(true);
-        fetch('http://localhost:3002/api/queue/generate-test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messageType, limit: 20 })
-        })
-            .then(res => res.json())
-            .then(data => {
-                setLoading(false);
-                if (Array.isArray(data)) {
-                    setPreviewMessages(data);
-                    setShowPreview(true);
-                } else {
-                    console.error("API returned non-array:", data);
-                    alert('Erro ao gerar teste: Resposta inválida da API');
-                }
-            })
-            .catch(err => {
-                setLoading(false);
-                alert('Erro ao gerar teste: ' + err);
-            });
     };
 
     const handleBlockInstallment = (item: QueueItem) => {
@@ -376,6 +351,12 @@ const QueueHistory: React.FC = () => {
             item.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             item.cpf?.toLowerCase().includes(searchTerm.toLowerCase());
 
+        // Filter by type
+        if (filterType !== 'all') {
+            if (filterType === 'reminder' && item.messageType !== 'reminder') return false;
+            if (filterType === 'overdue' && item.messageType !== 'overdue') return false;
+        }
+
         // Date filters
         let matchesDueDate = true;
 
@@ -422,7 +403,6 @@ const QueueHistory: React.FC = () => {
                 matchesDueDate = false;
             }
         }
-        // If no date filter is active, matchesDueDate remains true (show all items)
 
         return matchesStatus && matchesSearch && matchesDueDate;
     }).sort((a, b) => {
@@ -525,31 +505,65 @@ const QueueHistory: React.FC = () => {
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={() => setFilterStatus('todos')}
-                                        className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'todos' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
-                                    >
-                                        Todos
-                                    </button>
-                                    <button
-                                        onClick={() => setFilterStatus('pendente')}
-                                        className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'pendente' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
-                                    >
-                                        Pendentes
-                                    </button>
-                                    <button
-                                        onClick={() => setFilterStatus('enviado')}
-                                        className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'enviado' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
-                                    >
-                                        Enviados
-                                    </button>
-                                    <button
-                                        onClick={() => setFilterStatus('erro')}
-                                        className={`px-3 py-1 rounded-full text-xs font-medium ${filterStatus === 'erro' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
-                                    >
-                                        Erros
-                                    </button>
+                                <div className="flex flex-wrap items-center gap-4">
+                                    {/* Status Filters Group */}
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Status:</span>
+                                        <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                                            <button
+                                                onClick={() => setFilterStatus('todos')}
+                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'todos' ? 'bg-white dark:bg-gray-600 shadow text-gray-800 dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                            >
+                                                Todos
+                                            </button>
+                                            <button
+                                                onClick={() => setFilterStatus('pendente')}
+                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'pendente' ? 'bg-white dark:bg-gray-600 shadow text-yellow-600 dark:text-yellow-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                            >
+                                                Pendentes
+                                            </button>
+                                            <button
+                                                onClick={() => setFilterStatus('enviado')}
+                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'enviado' ? 'bg-white dark:bg-gray-600 shadow text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                            >
+                                                Enviados
+                                            </button>
+                                            <button
+                                                onClick={() => setFilterStatus('erro')}
+                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'erro' ? 'bg-white dark:bg-gray-600 shadow text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                            >
+                                                Erros
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Vertical Separator */}
+                                    <div className="h-8 w-px bg-gray-300 dark:bg-gray-600 hidden md:block"></div>
+
+                                    {/* Type Filters Group */}
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Tipo:</span>
+                                        <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                                            <button
+                                                onClick={() => setFilterType('all')}
+                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === 'all' ? 'bg-white dark:bg-gray-600 shadow text-gray-800 dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                            >
+                                                Todos
+                                            </button>
+                                            <button
+                                                onClick={() => setFilterType('reminder')}
+                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === 'reminder' ? 'bg-white dark:bg-gray-600 shadow text-yellow-600 dark:text-yellow-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                            >
+                                                Lembretes
+                                            </button>
+                                            <button
+                                                onClick={() => setFilterType('overdue')}
+                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === 'overdue' ? 'bg-white dark:bg-gray-600 shadow text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                            >
+                                                Vencidos
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
