@@ -864,7 +864,7 @@ app.post('/api/queue/generate-batch', async (req, res) => {
                         SELECT *
                         FROM BaseData
                         WHERE CONVERT(DATE, vencimento, 103) < '${today.toISOString().split('T')[0]}'
-                        AND CONVERT(DATE, vencimento, 103) >= '${targetDate.toISOString().split('T')[0]}'
+                        AND CONVERT(DATE, vencimento, 103) <= '${targetDate.toISOString().split('T')[0]}'
                         ORDER BY CONVERT(DATE, vencimento, 103) DESC
                     `;
                 }
