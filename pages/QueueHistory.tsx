@@ -11,7 +11,7 @@ interface QueueItem {
     scheduledDate?: string;
     sentDate?: string;
     errorDate?: string;
-    status: 'PENDING' | 'SENT' | 'ERROR' | 'PREVIEW';
+    status: 'PENDING' | 'SENT' | 'ERROR' | 'PREVIEW' | 'BLOCKED';
     messageContent?: string;
     messageType?: string;
     created_at?: string;
@@ -31,7 +31,7 @@ const QueueHistory: React.FC = () => {
     const [queue, setQueue] = useState<QueueItem[]>([]);
     const [blocked, setBlocked] = useState<BlockedClient[]>([]);
     const [loading, setLoading] = useState(true);
-    const [filterStatus, setFilterStatus] = useState<'todos' | 'pendente' | 'enviado' | 'erro'>('todos');
+    const [filterStatus, setFilterStatus] = useState<'todos' | 'pendente' | 'enviado' | 'bloqueado' | 'erro'>('todos');
     const [filterType, setFilterType] = useState<'all' | 'reminder' | 'overdue'>('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [showPreview, setShowPreview] = useState(false);
@@ -344,6 +344,7 @@ const QueueHistory: React.FC = () => {
         const matchesStatus = filterStatus === 'todos' ? true :
             (filterStatus === 'pendente' && item.status === 'PENDING') ||
             (filterStatus === 'enviado' && item.status === 'SENT') ||
+            (filterStatus === 'bloqueado' && item.status === 'BLOCKED') ||
             (filterStatus === 'erro' && item.status === 'ERROR');
 
         const matchesSearch = searchTerm === '' ? true :
@@ -529,6 +530,12 @@ const QueueHistory: React.FC = () => {
                                                 Enviados
                                             </button>
                                             <button
+                                                onClick={() => setFilterStatus('bloqueado')}
+                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'bloqueado' ? 'bg-white dark:bg-gray-600 shadow text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                            >
+                                                Bloqueados
+                                            </button>
+                                            <button
                                                 onClick={() => setFilterStatus('erro')}
                                                 className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'erro' ? 'bg-white dark:bg-gray-600 shadow text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
                                             >
@@ -686,13 +693,15 @@ const QueueHistory: React.FC = () => {
                                             <td className="px-4 py-3">
                                                 <span className={`px-2 py-1 rounded text-xs ${item.status === 'SENT' ? 'bg-green-100 text-green-800' :
                                                     item.status === 'ERROR' ? 'bg-red-100 text-red-800' :
-                                                        item.status === 'PREVIEW' ? 'bg-purple-100 text-purple-800' :
-                                                            'bg-yellow-100 text-yellow-800'
+                                                        item.status === 'BLOCKED' ? 'bg-blue-100 text-blue-800' :
+                                                            item.status === 'PREVIEW' ? 'bg-purple-100 text-purple-800' :
+                                                                'bg-yellow-100 text-yellow-800'
                                                     }`}>
                                                     {item.status === 'SENT' ? 'Enviado' :
                                                         item.status === 'ERROR' ? 'Erro' :
-                                                            item.status === 'PREVIEW' ? 'Preview' :
-                                                                'Pendente'}
+                                                            item.status === 'BLOCKED' ? 'Bloqueado' :
+                                                                item.status === 'PREVIEW' ? 'Preview' :
+                                                                    'Pendente'}
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3">

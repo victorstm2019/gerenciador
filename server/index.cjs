@@ -1056,8 +1056,19 @@ app.get('/api/queue/items', (req, res) => {
 
 // Get today's queue items (changed to get all items for better UX)
 app.get('/api/queue/today', (req, res) => {
-    const query = `SELECT * FROM queue_items 
-                   ORDER BY created_at DESC`;
+    const query = `
+        SELECT 
+            q.*,
+            CASE 
+                WHEN b_inst.id IS NOT NULL THEN 'BLOCKED'
+                WHEN b_client.id IS NOT NULL THEN 'BLOCKED'
+                ELSE q.status 
+            END as computed_status
+        FROM queue_items q
+        LEFT JOIN blocked_clients b_inst ON b_inst.block_type = 'installment' AND b_inst.installment_id = q.installment_id
+        LEFT JOIN blocked_clients b_client ON b_client.block_type = 'client' AND b_client.client_code = q.client_code
+        ORDER BY q.created_at DESC
+    `;
 
     db.all(query, (err, rows) => {
         if (err) {
@@ -1075,7 +1086,7 @@ app.get('/api/queue/today', (req, res) => {
             dueDate: row.due_date,
             messageContent: row.message_content,
             messageType: row.message_type,
-            status: row.status,
+            status: row.computed_status || row.status,
             sendMode: row.send_mode,
             createdAt: row.created_at,
             scheduledDate: row.created_at, // Using created_at as emission date
