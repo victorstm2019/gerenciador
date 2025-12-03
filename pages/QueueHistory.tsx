@@ -49,6 +49,15 @@ const QueueHistory: React.FC = () => {
     const [showManualWarning, setShowManualWarning] = useState(false);
     const [selectedBatchTypes, setSelectedBatchTypes] = useState<('reminder' | 'overdue')[]>([]);
 
+    // Date range generation states
+    const [showDateRangeModal, setShowDateRangeModal] = useState(false);
+    const [dateRangeStart, setDateRangeStart] = useState('');
+    const [dateRangeEnd, setDateRangeEnd] = useState('');
+    const [showDatePreview, setShowDatePreview] = useState(false);
+    const [datePreviewItems, setDatePreviewItems] = useState<QueueItem[]>([]);
+    const [selectedDateItems, setSelectedDateItems] = useState<Set<string>>(new Set());
+    const [loadingDatePreview, setLoadingDatePreview] = useState(false);
+
     // Selection states FOR MANUAL MODE
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
     const [selectAll, setSelectAll] = useState(false);
@@ -340,6 +349,93 @@ const QueueHistory: React.FC = () => {
         }
     };
 
+    // Date range generation functions
+    const handleDateRangeGenerate = async () => {
+        if (!dateRangeStart || !dateRangeEnd) {
+            alert('Por favor, selecione as datas de início e fim');
+            return;
+        }
+
+        setLoadingDatePreview(true);
+        try {
+            const res = await fetch('http://localhost:3002/api/queue/generate-by-date', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    startDate: dateRangeStart,
+                    endDate: dateRangeEnd
+                })
+            });
+
+            if (!res.ok) {
+                throw new Error('Erro ao gerar preview');
+            }
+
+            const data = await res.json();
+            setDatePreviewItems(data);
+            setShowDateRangeModal(false);
+            setShowDatePreview(true);
+            setSelectedDateItems(new Set());
+        } catch (err) {
+            alert('Erro ao gerar preview: ' + err);
+        } finally {
+            setLoadingDatePreview(false);
+        }
+    };
+
+    const handleDateItemSelect = (id: string) => {
+        const newSelected = new Set(selectedDateItems);
+        if (newSelected.has(id)) {
+            newSelected.delete(id);
+        } else {
+            newSelected.add(id);
+        }
+        setSelectedDateItems(newSelected);
+    };
+
+    const handleDateSelectAll = () => {
+        if (selectedDateItems.size === datePreviewItems.length) {
+            setSelectedDateItems(new Set());
+        } else {
+            setSelectedDateItems(new Set(datePreviewItems.map(item => item.id)));
+        }
+    };
+
+    const handleDatePreviewConfirm = async () => {
+        if (selectedDateItems.size === 0) {
+            alert('Selecione pelo menos um item');
+            return;
+        }
+
+        const itemsToAdd = datePreviewItems.filter(item => selectedDateItems.has(item.id));
+
+        try {
+            const res = await fetch('http://localhost:3002/api/queue/add-items', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    items: itemsToAdd,
+                    send_mode: 'MANUAL'
+                })
+            });
+
+            if (!res.ok) {
+                throw new Error('Erro ao adicionar itens');
+            }
+
+            const result = await res.json();
+            alert(`${result.inserted} itens adicionados à fila\n${result.skipped} itens ignorados (duplicados)`);
+            setShowDatePreview(false);
+            setDatePreviewItems([]);
+            setSelectedDateItems(new Set());
+            setDateRangeStart('');
+            setDateRangeEnd('');
+            fetchData();
+        } catch (err) {
+            alert('Erro ao adicionar itens: ' + err);
+        }
+    };
+
     const filteredQueue = queue.filter(item => {
         const matchesStatus = filterStatus === 'todos' ? true :
             (filterStatus === 'pendente' && item.status === 'PENDING') ||
@@ -492,6 +588,15 @@ const QueueHistory: React.FC = () => {
                                     <span className="material-symbols-outlined text-sm">warning</span>
                                     Gerar Vencidos
                                 </button>
+                                {sendMode === 'manual' && (
+                                    <button
+                                        onClick={() => setShowDateRangeModal(true)}
+                                        className="px-4 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                                    >
+                                        <span className="material-symbols-outlined text-sm">calendar_month</span>
+                                        Gerar Vencidos por Data
+                                    </button>
+                                )}
                             </div>
 
                         </div>
@@ -1051,6 +1156,168 @@ const QueueHistory: React.FC = () => {
                             >
                                 Confirmar Geração
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Date Range Selection Modal */}
+            {showDateRangeModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
+                        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+                            <h3 className="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                                <span className="material-symbols-outlined text-indigo-500">calendar_month</span>
+                                Gerar Vencidos por Data
+                            </h3>
+                        </div>
+                        <div className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data Início</label>
+                                <input
+                                    type="date"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                    value={dateRangeStart}
+                                    onChange={(e) => setDateRangeStart(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data Fim</label>
+                                <input
+                                    type="date"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                    value={dateRangeEnd}
+                                    onChange={(e) => setDateRangeEnd(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+                            <button
+                                onClick={() => setShowDateRangeModal(false)}
+                                className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleDateRangeGenerate}
+                                disabled={loadingDatePreview}
+                                className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                            >
+                                {loadingDatePreview ? (
+                                    <>
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                        Gerando...
+                                    </>
+                                ) : (
+                                    'Gerar Preview'
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Date Generation Preview Modal */}
+            {showDatePreview && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                        <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                            <div>
+                                <h3 className="text-xl font-bold text-gray-800 dark:text-white">Preview de Geração por Data</h3>
+                                <p className="text-sm text-gray-500">
+                                    {datePreviewItems.length} itens encontrados. Selecione os que deseja adicionar à fila.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowDatePreview(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <span className="material-symbols-outlined">close</span>
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-auto p-0">
+                            <table className="w-full text-sm text-left">
+                                <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300 sticky top-0 z-10">
+                                    <tr>
+                                        <th className="px-4 py-3 w-12">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedDateItems.size === datePreviewItems.length && datePreviewItems.length > 0}
+                                                onChange={handleDateSelectAll}
+                                                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                            />
+                                        </th>
+                                        <th className="px-4 py-3">Código</th>
+                                        <th className="px-4 py-3">Cliente</th>
+                                        <th className="px-4 py-3">Vencimento</th>
+                                        <th className="px-4 py-3">Valor</th>
+                                        <th className="px-4 py-3">Mensagem</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                    {datePreviewItems.map((item) => (
+                                        <tr
+                                            key={item.id}
+                                            className={`hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer ${selectedDateItems.has(item.id) ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''}`}
+                                            onClick={() => handleDateItemSelect(item.id)}
+                                        >
+                                            <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedDateItems.has(item.id)}
+                                                    onChange={() => handleDateItemSelect(item.id)}
+                                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                />
+                                            </td>
+                                            <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{item.code}</td>
+                                            <td className="px-4 py-3">
+                                                <div>
+                                                    <p className="font-medium text-gray-900 dark:text-white">{item.clientName}</p>
+                                                    <p className="text-xs text-gray-500">{item.cpf}</p>
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
+                                                {parseBrazilianDate(item.dueDate)}
+                                            </td>
+                                            <td className="px-4 py-3 font-medium">{formatCurrency(item.installmentValue)}</td>
+                                            <td className="px-4 py-3">
+                                                <p className="text-xs text-gray-500 truncate max-w-xs" title={item.messageContent}>
+                                                    {item.messageContent}
+                                                </p>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {datePreviewItems.length === 0 && (
+                                        <tr>
+                                            <td colSpan={6} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                                                Nenhum item encontrado para o período selecionado.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                            <div className="text-sm text-gray-600 dark:text-gray-400">
+                                <strong>{selectedDateItems.size}</strong> itens selecionados
+                            </div>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setShowDatePreview(false)}
+                                    className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleDatePreviewConfirm}
+                                    disabled={selectedDateItems.size === 0}
+                                    className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    Confirmar e Adicionar à Fila
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

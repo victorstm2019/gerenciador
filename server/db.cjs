@@ -123,21 +123,9 @@ db.serialize(() => {
       if (!columnNames.includes('created_at')) {
         db.run("ALTER TABLE queue_items ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP");
       }
-    }
-  });
-
-  // Seed Queue if empty (for demo purposes)
-  db.get("SELECT count(*) as count FROM queue_items", (err, row) => {
-    if (row.count === 0) {
-      const stmt = db.prepare("INSERT INTO queue_items (client_name, installment_value, due_date, scheduled_date, sent_date, error_date, code, cpf, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-
-      stmt.run('Ana Silva', '150,00', '30/10/2023', '25/10/2023 10:00', null, null, '10234', '123.***.***-00', 'PENDING');
-      stmt.run('Carlos Pereira', '250,50', '20/10/2023', null, '24/10/2023 15:30', null, '10235', '987.***.***-00', 'SENT');
-      stmt.run('Mariana Costa', '99,90', '15/10/2023', null, null, '24/10/2023 14:00', '10236', '111.***.***-44', 'ERROR');
-      stmt.run('João Fernandes', '500,00', '22/10/2023', null, '24/10/2023 11:15', null, '10237', '444.***.***-55', 'SENT');
-
-      stmt.finalize();
-      console.log("Default queue items inserted.");
+      if (!columnNames.includes('description')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN description TEXT");
+      }
     }
   });
 
