@@ -7,6 +7,7 @@ interface QueueItem {
     cpf: string;
     installmentValue: string;
     dueDate: string;
+    emissionDate?: string;
     createdAt?: string;
     scheduledDate?: string;
     sentDate?: string;
@@ -15,6 +16,8 @@ interface QueueItem {
     messageContent?: string;
     messageType?: string;
     created_at?: string;
+    description?: string;
+    phone?: string;
 }
 
 interface BlockedClient {
@@ -789,7 +792,7 @@ const QueueHistory: React.FC = () => {
                                                 </div>
                                             </td>
                                             <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                                                {parseBrazilianDate(item.createdAt)}
+                                                {parseBrazilianDate(item.emissionDate || item.createdAt)}
                                             </td>
                                             <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                                                 {parseBrazilianDate(item.dueDate)}
@@ -1011,6 +1014,20 @@ const QueueHistory: React.FC = () => {
                                     <div>
                                         <p className="text-gray-500 dark:text-gray-400">Valor</p>
                                         <p className="font-medium text-gray-900 dark:text-white">{formatCurrency(selectedMessage.installmentValue)}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-500 dark:text-gray-400">Emissão</p>
+                                        <p className="font-medium text-gray-900 dark:text-white">
+                                            {parseBrazilianDate(selectedMessage.emissionDate)}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-500 dark:text-gray-400">Telefone</p>
+                                        <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.phone || 'N/A'}</p>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <p className="text-gray-500 dark:text-gray-400">Descrição da Parcela</p>
+                                        <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.description || 'N/A'}</p>
                                     </div>
                                 </div>
                             </div>

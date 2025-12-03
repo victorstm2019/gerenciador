@@ -678,6 +678,21 @@ app.post('/api/queue/generate-test', async (req, res) => {
             // Generate messages
             const template = messageType === 'reminder' ? config.reminder_msg : config.overdue_msg;
 
+            const getValue = (obj, key) => {
+                if (!obj) return undefined;
+                if (obj[key] !== undefined) return obj[key];
+                const lowerKey = key.toLowerCase();
+                const foundKey = Object.keys(obj).find(k => k.toLowerCase() === lowerKey);
+                if (foundKey) return obj[foundKey];
+                if (lowerKey === 'emissao' || lowerKey === 'emissiondate') {
+                    const variations = ['Emissao', 'EMISSAO', 'DataEmissao', 'Data_Emissao', 'emission_date'];
+                    for (const v of variations) {
+                        if (obj[v] !== undefined) return obj[v];
+                    }
+                }
+                return undefined;
+            };
+
             const generatedMessages = clients.map(client => {
                 let message = template;
 
@@ -705,12 +720,13 @@ app.post('/api/queue/generate-test', async (req, res) => {
                     code: client.codigocliente,
                     clientName: client.nomecliente,
                     cpf: client.cpfcliente,
-                    phone: client.fone1 || client.fone2,
+                    phone: getValue(client, 'fone1') || getValue(client, 'fone2'),
                     dueDate: client.vencimento,
+                    emissionDate: getValue(client, 'emissao'),
+                    description: getValue(client, 'descricaoparcela'),
                     installmentValue: client.valorfinalparcela || client.valorbrutoparcela || 0,
                     value: client.valorfinalparcela || client.valorbrutoparcela || 0,
                     messageContent: message,
-                    messageType: messageType,
                     messageType: messageType,
                     status: 'PREVIEW'
                 };
@@ -846,7 +862,10 @@ app.post('/api/queue/generate-batch', async (req, res) => {
                         WITH BaseData AS (
                             ${cleanBaseQuery}
                         )
-                        SELECT *
+                        SELECT 
+                            codigocliente, nomecliente, cpfcliente, fone1, fone2,
+                            emissao, vencimento, valorbrutoparcela, desconto, juros, multa,
+                            valorfinalparcela, valortotaldevido, totalvencido, descricaoparcela
                         FROM BaseData
                         WHERE CONVERT(DATE, vencimento, 103) >= '${today.toISOString().split('T')[0]}'
                         AND CONVERT(DATE, vencimento, 103) <= '${targetDate.toISOString().split('T')[0]}'
@@ -861,7 +880,10 @@ app.post('/api/queue/generate-batch', async (req, res) => {
                         WITH BaseData AS (
                             ${cleanBaseQuery}
                         )
-                        SELECT *
+                        SELECT 
+                            codigocliente, nomecliente, cpfcliente, fone1, fone2,
+                            emissao, vencimento, valorbrutoparcela, desconto, juros, multa,
+                            valorfinalparcela, valortotaldevido, totalvencido, descricaoparcela
                         FROM BaseData
                         WHERE CONVERT(DATE, vencimento, 103) < '${today.toISOString().split('T')[0]}'
                         AND CONVERT(DATE, vencimento, 103) >= '${targetDate.toISOString().split('T')[0]}'
@@ -872,23 +894,26 @@ app.post('/api/queue/generate-batch', async (req, res) => {
                 if (finalQuery) {
                     const result = await pool.request().query(finalQuery);
                     const clients = result.recordset;
-                    const template = type === 'reminder' ? config.reminder_msg : config.overdue_msg;
-
-                    // LOG DE DEBUG
-                    if (clients.length > 0) {
-                        console.log('\n=== DEBUG GENERATE-TEST ===');
-                        console.log('Total de clientes:', clients.length);
-                        console.log('Chaves do primeiro cliente:', Object.keys(clients[0]));
-                        console.log('Primeiro cliente completo:', JSON.stringify(clients[0], null, 2));
-                        console.log('===========================\n');
-                    }
 
                     // Helper function to get value case-insensitive
                     const getValue = (obj, key) => {
+                        if (!obj) return undefined;
                         if (obj[key] !== undefined) return obj[key];
+
                         const lowerKey = key.toLowerCase();
                         const foundKey = Object.keys(obj).find(k => k.toLowerCase() === lowerKey);
-                        return foundKey ? obj[foundKey] : undefined;
+
+                        if (foundKey) return obj[foundKey];
+
+                        // Tentar variações comuns se for data de emissão
+                        if (lowerKey === 'emissao' || lowerKey === 'emissiondate') {
+                            const variations = ['Emissao', 'EMISSAO', 'DataEmissao', 'Data_Emissao', 'emission_date'];
+                            for (const v of variations) {
+                                if (obj[v] !== undefined) return obj[v];
+                            }
+                        }
+
+                        return undefined;
                     };
 
                     const messages = clients.map((client, idx) => {
@@ -924,6 +949,7 @@ app.post('/api/queue/generate-batch', async (req, res) => {
                             clientName: getValue(client, 'nomecliente'),
                             cpf: getValue(client, 'cpfcliente'),
                             dueDate: getValue(client, 'vencimento'),
+                            emissionDate: getValue(client, 'emissao'),
                             value: getValue(client, 'valorfinalparcela') || getValue(client, 'valorbrutoparcela') || 0,
                             messageContent: message,
                             messageType: type,
@@ -939,6 +965,16 @@ app.post('/api/queue/generate-batch', async (req, res) => {
                     });
                     allMessages = [...allMessages, ...messages];
                 }
+            }
+
+            // Log para debug
+            if (allMessages.length > 0) {
+                console.log('\n=== GENERATE-TEST DEBUG ===');
+                console.log('Total mensagens:', allMessages.length);
+                console.log('Primeira mensagem:');
+                console.log('- dueDate:', allMessages[0].dueDate);
+                console.log('- emissionDate:', allMessages[0].emissionDate);
+                console.log('===========================\n');
             }
 
             res.json(allMessages);
@@ -1324,55 +1360,6 @@ app.get('/api/queue/today', async (req, res) => {
                 const pool = await sql.connect(config);
 
                 // Fetch descriptions for all items
-                const mappedRows = await Promise.all((rows || []).map(async row => {
-                    let description = row.description || '';
-
-                    // Try to fetch description from SQL Server
-                    if (row.client_code) {
-                        try {
-                            const result = await pool.request()
-                                .input('codigo', sql.VarChar, row.client_code)
-                                .query(`
-                                    SELECT TOP 1 FC.Descricao 
-                                    FROM FINANCEIRO_CONTA FC
-                                    WHERE FC.Cliente__Codigo = @codigo
-                                    AND FC.PAGAR_RECEBER = 'R'
-                                    AND FC.SITUACAO = 'A'
-                                    ORDER BY FC.VENCIMENTO DESC
-                                `);
-
-                            if (result.recordset.length > 0) {
-                                description = result.recordset[0].Descricao || description;
-                            }
-                        } catch (sqlErr) {
-                            console.error('Error fetching description:', sqlErr);
-                        }
-                    }
-
-                    return {
-                        id: row.id,
-                        code: row.client_code || row.code,
-                        clientName: row.client_name,
-                        cpf: row.cpf,
-                        phone: row.phone,
-                        installmentValue: row.installment_value,
-                        value: row.installment_value,
-                        dueDate: row.due_date,
-                        messageContent: row.message_content,
-                        messageType: row.message_type,
-                        status: row.computed_status || row.status,
-                        sendMode: row.send_mode,
-                        createdAt: row.created_at,
-                        scheduledDate: row.created_at,
-                        created_at: row.created_at,
-                        description: description
-                    };
-                }));
-
-                await pool.close();
-                res.json(mappedRows);
-            } else {
-                // No SQL config, return without descriptions
                 const mappedRows = (rows || []).map(row => ({
                     id: row.id,
                     code: row.client_code || row.code,
@@ -1382,6 +1369,7 @@ app.get('/api/queue/today', async (req, res) => {
                     installmentValue: row.installment_value,
                     value: row.installment_value,
                     dueDate: row.due_date,
+                    emissionDate: row.emission_date,
                     messageContent: row.message_content,
                     messageType: row.message_type,
                     status: row.computed_status || row.status,
@@ -1460,10 +1448,10 @@ app.post('/api/queue/add-items', async (req, res) => {
             const existing = await new Promise((resolve, reject) => {
                 db.get(
                     `SELECT id FROM queue_items 
-                     WHERE client_code = ? 
-                     AND installment_id = ? 
-                     AND message_type = ? 
-                     AND status = 'PENDING'`,
+                     WHERE client_code = ?
+                                    AND installment_id = ?
+                                        AND message_type = ?
+                                            AND status = 'PENDING'`,
                     [item.code, item.id, item.messageType],
                     (err, row) => {
                         if (err) reject(err);
@@ -1480,11 +1468,11 @@ app.post('/api/queue/add-items', async (req, res) => {
             // Insert new item
             await new Promise((resolve, reject) => {
                 db.run(
-                    `INSERT INTO queue_items (
+                    `INSERT INTO queue_items(
                         client_code, client_name, cpf, phone, installment_id,
-                        installment_value, due_date, message_content, message_type,
+                        installment_value, due_date, emission_date, message_content, message_type,
                         send_mode, status, description, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, CURRENT_TIMESTAMP)`,
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, CURRENT_TIMESTAMP)`,
                     [
                         item.code,
                         item.clientName,
@@ -1495,6 +1483,7 @@ app.post('/api/queue/add-items', async (req, res) => {
                             ? item.installmentValue.toFixed(2)
                             : item.installmentValue,
                         item.dueDate,
+                        item.emissionDate,
                         item.messageContent,
                         item.messageType,
                         send_mode || 'MANUAL',
@@ -1550,7 +1539,7 @@ app.delete('/api/queue/items/bulk', (req, res) => {
     }
 
     const placeholders = ids.map(() => '?').join(',');
-    const query = `DELETE FROM queue_items WHERE id IN (${placeholders})`;
+    const query = `DELETE FROM queue_items WHERE id IN(${placeholders})`;
 
     db.run(query, ids, function (err) {
         if (err) {

@@ -126,6 +126,9 @@ db.serialize(() => {
       if (!columnNames.includes('description')) {
         db.run("ALTER TABLE queue_items ADD COLUMN description TEXT");
       }
+      if (!columnNames.includes('emission_date')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN emission_date TEXT");
+      }
     }
   });
 
