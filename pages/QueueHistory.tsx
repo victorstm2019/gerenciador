@@ -761,7 +761,7 @@ const QueueHistory: React.FC = () => {
                                         <th className="px-4 py-3">Cliente</th>
                                         <th className="px-4 py-3">Emissão</th>
                                         <th className="px-4 py-3">Vencimento</th>
-                                        <th className="px-4 py-3">Valor</th>
+                                        <th className="px-4 py-3 text-right">Valor</th>
                                         <th className="px-4 py-3">Status</th>
                                         <th className="px-4 py-3">Ações</th>
                                     </tr>
@@ -797,7 +797,7 @@ const QueueHistory: React.FC = () => {
                                             <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                                                 {parseBrazilianDate(item.dueDate)}
                                             </td>
-                                            <td className="px-4 py-3 font-medium">{formatCurrency(item.installmentValue)}</td>
+                                            <td className="px-4 py-3 font-medium text-right">{formatCurrency(item.installmentValue)}</td>
                                             <td className="px-4 py-3">
                                                 <span className={`px-2 py-1 rounded text-xs ${item.status === 'SENT' ? 'bg-green-100 text-green-800' :
                                                     item.status === 'ERROR' ? 'bg-red-100 text-red-800' :
@@ -984,8 +984,8 @@ const QueueHistory: React.FC = () => {
             {/* Message View Modal */}
             {showMessageModal && selectedMessage && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full">
-                        <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-xl w-full">
+                        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
                             <h3 className="text-xl font-bold text-gray-800 dark:text-white">Mensagem - {selectedMessage.clientName}</h3>
                             <button
                                 onClick={() => setShowMessageModal(false)}
@@ -994,9 +994,9 @@ const QueueHistory: React.FC = () => {
                                 <span className="material-symbols-outlined">close</span>
                             </button>
                         </div>
-                        <div className="p-6">
-                            <div className="space-y-3 mb-4">
-                                <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div className="p-4">
+                            <div className="space-y-2 mb-4">
+                                <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-sm">
                                     <div>
                                         <p className="text-gray-500 dark:text-gray-400">Código</p>
                                         <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.code}</p>
@@ -1004,6 +1004,12 @@ const QueueHistory: React.FC = () => {
                                     <div>
                                         <p className="text-gray-500 dark:text-gray-400">CPF</p>
                                         <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.cpf}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-500 dark:text-gray-400">Emissão</p>
+                                        <p className="font-medium text-gray-900 dark:text-white">
+                                            {parseBrazilianDate(selectedMessage.emissionDate)}
+                                        </p>
                                     </div>
                                     <div>
                                         <p className="text-gray-500 dark:text-gray-400">Vencimento</p>
@@ -1014,12 +1020,6 @@ const QueueHistory: React.FC = () => {
                                     <div>
                                         <p className="text-gray-500 dark:text-gray-400">Valor</p>
                                         <p className="font-medium text-gray-900 dark:text-white">{formatCurrency(selectedMessage.installmentValue)}</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-gray-500 dark:text-gray-400">Emissão</p>
-                                        <p className="font-medium text-gray-900 dark:text-white">
-                                            {parseBrazilianDate(selectedMessage.emissionDate)}
-                                        </p>
                                     </div>
                                     <div>
                                         <p className="text-gray-500 dark:text-gray-400">Telefone</p>
@@ -1038,7 +1038,7 @@ const QueueHistory: React.FC = () => {
                                 </p>
                             </div>
                         </div>
-                        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+                        <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
                             <button
                                 onClick={() => setShowMessageModal(false)}
                                 className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
