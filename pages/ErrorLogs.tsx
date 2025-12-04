@@ -141,14 +141,17 @@ const ErrorLogs: React.FC = () => {
 
     let matchesDate = true;
     if (startDate || endDate) {
+      // Parse data_hora que vem do banco
       const logDate = new Date(log.data_hora);
+
+      // Extrair apenas a parte da data (YYYY-MM-DD) como string
+      const logDateStr = logDate.toISOString().split('T')[0];
+
       if (startDate) {
-        matchesDate = matchesDate && logDate >= new Date(startDate);
+        matchesDate = matchesDate && logDateStr >= startDate;
       }
       if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        matchesDate = matchesDate && logDate <= end;
+        matchesDate = matchesDate && logDateStr <= endDate;
       }
     }
 

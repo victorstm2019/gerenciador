@@ -124,7 +124,7 @@ const QueueHistory: React.FC = () => {
             .then(res => res.json())
             .then(result => {
                 setLoading(false);
-                alert(`${result.count} itens adicionados à fila com sucesso!`);
+                alert(`${result.inserted} itens adicionados à fila\n${result.skipped} duplicados ignorados`);
                 fetchData(); // Refresh the table
             })
             .catch(err => {
