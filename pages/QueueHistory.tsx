@@ -591,7 +591,7 @@ const QueueHistory: React.FC = () => {
                     <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
                         <div className="flex flex-col gap-4 mb-4">
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                                <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200">Fila & Histórico</h2>
+                                <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Fila & Histórico</h2>
 
                                 {/* Send Mode Toggle */}
                                 <div className="flex items-center gap-3">

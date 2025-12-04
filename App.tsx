@@ -47,7 +47,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
       {/* Sidebar */}
       <aside className="hidden lg:flex w-48 flex-col bg-gray-900 text-white">
         <div className="flex h-16 items-center px-6 border-b border-gray-800">
-          <span className="text-lg font-bold">Gestão de Cobranças</span>
+          <span className="text-xl font-bold">Gestão de Cobranças</span>
         </div>
         {user && (
           <div className="px-6 py-3 border-b border-gray-800">
@@ -83,7 +83,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         <header className="lg:hidden flex items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-          <span className="text-lg font-bold text-gray-800 dark:text-white">Gestão de Cobranças</span>
+          <span className="text-xl font-bold text-gray-800 dark:text-white">Gestão de Cobranças</span>
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             className="p-2 text-gray-600 dark:text-gray-300"
