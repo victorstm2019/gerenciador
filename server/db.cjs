@@ -139,28 +139,22 @@ db.serialize(() => {
     tipo TEXT NOT NULL,
     mensagem TEXT NOT NULL,
     detalhes TEXT,
-    client_code TEXT,
-    phone TEXT
-  )`);
-
-
-  // Blocked Clients Table
-  db.run(`CREATE TABLE IF NOT EXISTS blocked_clients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    identifier TEXT UNIQUE,
-    client_name TEXT,
-    reason TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-
-  // DB Connections Table (for SQL Server)
-  db.run(`CREATE TABLE IF NOT EXISTS db_connections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    host TEXT,
-    database TEXT,
     user TEXT,
     password TEXT,
     active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Duplicate Logs Table
+  db.run(`CREATE TABLE IF NOT EXISTS duplicate_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id TEXT,
+    client_code TEXT,
+    client_name TEXT,
+    due_date TEXT,
+    installment_value TEXT,
+    message_type TEXT,
+    existing_queue_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 

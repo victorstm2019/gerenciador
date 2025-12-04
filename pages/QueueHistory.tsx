@@ -60,6 +60,8 @@ const QueueHistory: React.FC = () => {
     const [datePreviewItems, setDatePreviewItems] = useState<QueueItem[]>([]);
     const [selectedDateItems, setSelectedDateItems] = useState<Set<string>>(new Set());
     const [loadingDatePreview, setLoadingDatePreview] = useState(false);
+    const [loadingConfirm, setLoadingConfirm] = useState(false);
+    const [confirmTimeout, setConfirmTimeout] = useState<number>(0);
 
     // Selection states FOR MANUAL MODE
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -209,19 +211,22 @@ const QueueHistory: React.FC = () => {
         }
 
         setLoading(true);
-        Promise.all(
-            Array.from(selectedItems).map(id =>
-                fetch(`http://localhost:3002/api/queue/${id}`, {
-                    method: 'DELETE'
-                })
-            )
-        )
-            .then(() => {
+
+        fetch('http://localhost:3002/api/queue/items/bulk', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: Array.from(selectedItems) })
+        })
+            .then(res => {
+                if (!res.ok) throw new Error('Falha na requisição');
+                return res.json();
+            })
+            .then(data => {
                 setLoading(false);
                 setSelectedItems(new Set());
                 setSelectAll(false);
                 fetchData();
-                alert('Itens excluídos com sucesso!');
+                alert(`${data.deleted} itens excluídos com sucesso!`);
             })
             .catch(err => {
                 setLoading(false);
@@ -412,6 +417,28 @@ const QueueHistory: React.FC = () => {
 
         const itemsToAdd = datePreviewItems.filter(item => selectedDateItems.has(item.id));
 
+        setLoadingConfirm(true);
+        setConfirmTimeout(60); // 60 segundos
+
+        // Iniciar contagem regressiva
+        const countdownInterval = setInterval(() => {
+            setConfirmTimeout(prev => {
+                if (prev <= 1) {
+                    clearInterval(countdownInterval);
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+
+        // Timeout de 60 segundos
+        const timeoutId = setTimeout(() => {
+            clearInterval(countdownInterval);
+            setLoadingConfirm(false);
+            setConfirmTimeout(0);
+            alert('⏱️ Tempo excedido!\n\nA adição à fila levou mais de 1 minuto.\nPor favor, reduza o período de datas selecionado e tente novamente.');
+        }, 60000);
+
         try {
             const res = await fetch('http://localhost:3002/api/queue/add-items', {
                 method: 'POST',
@@ -421,6 +448,10 @@ const QueueHistory: React.FC = () => {
                     send_mode: 'MANUAL'
                 })
             });
+
+            // Limpar timeout e countdown se completou antes de 60s
+            clearTimeout(timeoutId);
+            clearInterval(countdownInterval);
 
             if (!res.ok) {
                 throw new Error('Erro ao adicionar itens');
@@ -435,7 +466,12 @@ const QueueHistory: React.FC = () => {
             setDateRangeEnd('');
             fetchData();
         } catch (err) {
+            clearTimeout(timeoutId);
+            clearInterval(countdownInterval);
             alert('Erro ao adicionar itens: ' + err);
+        } finally {
+            setLoadingConfirm(false);
+            setConfirmTimeout(0);
         }
     };
 
@@ -1218,7 +1254,7 @@ const QueueHistory: React.FC = () => {
                             <button
                                 onClick={handleDateRangeGenerate}
                                 disabled={loadingDatePreview}
-                                className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                                className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
                                 {loadingDatePreview ? (
                                     <>
@@ -1329,10 +1365,17 @@ const QueueHistory: React.FC = () => {
                                 </button>
                                 <button
                                     onClick={handleDatePreviewConfirm}
-                                    disabled={selectedDateItems.size === 0}
-                                    className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={selectedDateItems.size === 0 || loadingConfirm}
+                                    className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                                 >
-                                    Confirmar e Adicionar à Fila
+                                    {loadingConfirm ? (
+                                        <>
+                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                            Adicionando... ({confirmTimeout}s)
+                                        </>
+                                    ) : (
+                                        'Confirmar e Adicionar à Fila'
+                                    )}
                                 </button>
                             </div>
                         </div>

@@ -26,7 +26,7 @@ const MessageConfig: React.FC = () => {
 
   // Available database columns
   const availableColumns = [
-    'codigocliente', 'nomecliente', 'cpfcliente', 'fone1', 'fone2',
+    'codigocliente', 'numeroparcela', 'sequenciavenda', 'nomecliente', 'cpfcliente', 'fone1', 'fone2',
     'descricaoparcela', 'emissao', 'vencimento', 'valorbrutoparcela',
     'desconto', 'juros', 'multa', 'valorfinalparcela', 'valortotaldevido', 'totalvencido'
   ];
@@ -394,7 +394,7 @@ const MessageConfig: React.FC = () => {
 
           {/* Right column: items 9-15 */}
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3">Campos 9-15</p>
+            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3">Campos 9-17</p>
             {fieldMappings.slice(8).map((mapping, index) => (
               <div key={mapping.message_variable} className="flex items-center gap-2 bg-gray-50 dark:bg-gray-900 p-2.5 rounded">
                 <span className="text-xs font-bold text-gray-400 w-6">{index + 9}.</span>

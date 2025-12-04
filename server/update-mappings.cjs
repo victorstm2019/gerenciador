@@ -20,6 +20,8 @@ db.serialize(() => {
     const stmt = db.prepare("INSERT INTO field_mappings (message_variable, database_column) VALUES (?, ?)");
 
     stmt.run('@codigocliente', 'codigocliente');
+    stmt.run('@numeroparcela', 'numeroparcela');
+    stmt.run('@sequenciavenda', 'sequenciavenda');
     stmt.run('@nomecliente', 'nomecliente');
     stmt.run('@cpfcliente', 'cpfcliente');
     stmt.run('@fone1', 'fone1');
@@ -39,7 +41,7 @@ db.serialize(() => {
         if (err) {
             console.error('Erro ao inserir mapeamentos:', err);
         } else {
-            console.log('✅ 15 mapeamentos inseridos com sucesso!');
+            console.log('✅ 17 mapeamentos inseridos com sucesso!');
             console.log('\nMapeamentos configurados:');
 
             db.all("SELECT * FROM field_mappings ORDER BY id", (err, rows) => {

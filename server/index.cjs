@@ -8,7 +8,8 @@ const app = express();
 const PORT = 3002;
 
 app.use(cors());
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '50mb' })); // Aumentado de 100kb (padrão) para 50mb
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 // --- Message Config API ---
 
@@ -610,6 +611,8 @@ app.post('/api/queue/generate-test', async (req, res) => {
             const baseQuery = savedQuery || `
                 SELECT
                     FC.Cliente__Codigo AS codigocliente,
+                    FC.Parcela_Numero AS numeroparcela,
+                    FC.Sequencia AS sequenciavenda,
                     C.Nome AS nomecliente,
                     C.CNPJ AS cpfcliente,
                     c.fone1 as fone1,
@@ -715,9 +718,14 @@ app.post('/api/queue/generate-test', async (req, res) => {
                     message = message.replace(new RegExp(variable, 'g'), value);
                 });
 
+                // Criar ID único combinando sequência de venda, número da parcela e código do cliente
+                const uniqueId = `${getValue(client, 'sequenciavenda') || '0'}-${getValue(client, 'numeroparcela') || '0'}-${client.codigocliente}`;
+
                 return {
-                    id: client.codigocliente || client.id,
+                    id: uniqueId,
                     code: client.codigocliente,
+                    installmentNumber: getValue(client, 'numeroparcela'),
+                    sequenceNumber: getValue(client, 'sequenciavenda'),
                     clientName: client.nomecliente,
                     cpf: client.cpfcliente,
                     phone: getValue(client, 'fone1') || getValue(client, 'fone2'),
@@ -824,6 +832,7 @@ app.post('/api/queue/generate-batch', async (req, res) => {
             const baseQuery = savedQuery || `
                 SELECT
                     FC.Cliente__Codigo AS codigocliente,
+                    FC.Parcela_Numero AS numeroparcela,
                     C.Nome AS nomecliente,
                     C.CNPJ AS cpfcliente,
                     c.fone1 as fone1,
@@ -863,7 +872,7 @@ app.post('/api/queue/generate-batch', async (req, res) => {
                             ${cleanBaseQuery}
                         )
                         SELECT 
-                            codigocliente, nomecliente, cpfcliente, fone1, fone2,
+                            codigocliente, numeroparcela, sequenciavenda, nomecliente, cpfcliente, fone1, fone2,
                             emissao, vencimento, valorbrutoparcela, desconto, juros, multa,
                             valorfinalparcela, valortotaldevido, totalvencido, descricaoparcela
                         FROM BaseData
@@ -881,7 +890,7 @@ app.post('/api/queue/generate-batch', async (req, res) => {
                             ${cleanBaseQuery}
                         )
                         SELECT 
-                            codigocliente, nomecliente, cpfcliente, fone1, fone2,
+                            codigocliente, numeroparcela, sequenciavenda, nomecliente, cpfcliente, fone1, fone2,
                             emissao, vencimento, valorbrutoparcela, desconto, juros, multa,
                             valorfinalparcela, valortotaldevido, totalvencido, descricaoparcela
                         FROM BaseData
@@ -943,24 +952,25 @@ app.post('/api/queue/generate-batch', async (req, res) => {
                             console.log('===========================\n');
                         }
 
+                        // Criar ID único combinando sequência de venda, número da parcela e código do cliente
+                        const uniqueId = `${getValue(client, 'sequenciavenda') || '0'}-${getValue(client, 'numeroparcela') || '0'}-${getValue(client, 'codigocliente')}`;
+
                         return {
-                            id: getValue(client, 'codigocliente') || client.id,
+                            id: uniqueId,
                             code: getValue(client, 'codigocliente'),
+                            installmentNumber: getValue(client, 'numeroparcela'),
+                            sequenceNumber: getValue(client, 'sequenciavenda'),
                             clientName: getValue(client, 'nomecliente'),
                             cpf: getValue(client, 'cpfcliente'),
                             dueDate: getValue(client, 'vencimento'),
                             emissionDate: getValue(client, 'emissao'),
                             value: getValue(client, 'valorfinalparcela') || getValue(client, 'valorbrutoparcela') || 0,
+                            installmentValue: getValue(client, 'valorfinalparcela') || getValue(client, 'valorbrutoparcela') || 0,
                             messageContent: message,
                             messageType: type,
                             status: 'PREVIEW',
                             phone: getValue(client, 'fone1') || '',
-                            description: desc,
-                            _debug_timestamp: new Date().toISOString(),
-                            _debug_keys: Object.keys(client),
-                            _debug_desc_raw: client.descricaoparcela,
-                            _debug_desc_upper: client.DESCRICAOPARCELA,
-                            _debug_desc_getValue: desc
+                            description: desc
                         };
                     });
                     allMessages = [...allMessages, ...messages];
@@ -1067,6 +1077,8 @@ app.post('/api/queue/generate-by-date', async (req, res) => {
             const baseQuery = savedQuery || `
                 SELECT
                     FC.Cliente__Codigo AS codigocliente,
+                    FC.Parcela_Numero AS numeroparcela,
+                    FC.Sequencia AS sequenciavenda,
                     C.Nome AS nomecliente,
                     C.CNPJ AS cpfcliente,
                     c.fone1 as fone1,
@@ -1109,19 +1121,34 @@ app.post('/api/queue/generate-by-date', async (req, res) => {
                 return dateStr;
             };
 
+            const parsedStartDate = parseDate(startDate);
+            const parsedEndDate = parseDate(endDate);
+
+            console.log('[generate-by-date] Período solicitado:', { startDate, endDate, parsedStartDate, parsedEndDate });
+
             const finalQuery = `
                 WITH BaseData AS (
                     ${cleanBaseQuery}
                 )
                 SELECT *
                 FROM BaseData
-                WHERE CONVERT(DATE, vencimento, 103) >= '${parseDate(startDate)}'
-                AND CONVERT(DATE, vencimento, 103) <= '${parseDate(endDate)}'
+                WHERE CONVERT(DATE, vencimento, 103) >= '${parsedStartDate}'
+                AND CONVERT(DATE, vencimento, 103) <= '${parsedEndDate}'
                 ORDER BY CONVERT(DATE, vencimento, 103) DESC
             `;
 
+            console.log('[generate-by-date] Query SQL gerada');
+
             const result = await pool.request().query(finalQuery);
             const clients = result.recordset;
+
+            console.log(`[generate-by-date] Encontrados ${clients.length} registros no período`);
+
+            if (clients.length === 0) {
+                console.log('[generate-by-date] Nenhum registro encontrado no período especificado');
+                return res.json([]);
+            }
+
             const template = config.overdue_msg;
 
             // Helper function to get value case-insensitive
@@ -1150,9 +1177,14 @@ app.post('/api/queue/generate-by-date', async (req, res) => {
 
                 const desc = getValue(client, 'descricaoparcela') || '';
 
+                // Criar ID único combinando sequência de venda, número da parcela e código do cliente
+                const uniqueId = `${getValue(client, 'sequenciavenda') || '0'}-${getValue(client, 'numeroparcela') || '0'}-${getValue(client, 'codigocliente')}`;
+
                 return {
-                    id: getValue(client, 'codigocliente') || client.id,
+                    id: uniqueId,
                     code: getValue(client, 'codigocliente'),
+                    installmentNumber: getValue(client, 'numeroparcela'),
+                    sequenceNumber: getValue(client, 'sequenciavenda'),
                     clientName: getValue(client, 'nomecliente'),
                     cpf: getValue(client, 'cpfcliente'),
                     dueDate: getValue(client, 'vencimento'),
@@ -1167,6 +1199,9 @@ app.post('/api/queue/generate-by-date', async (req, res) => {
                 };
             });
 
+            console.log(`[generate-by-date] Geradas ${messages.length} mensagens com sucesso`);
+            console.log('[generate-by-date] Exemplo de mensagem gerada:', messages[0]);
+
             res.json(messages);
 
         } finally {
@@ -1176,8 +1211,12 @@ app.post('/api/queue/generate-by-date', async (req, res) => {
         }
 
     } catch (error) {
-        console.error("Error generating messages by date:", error);
-        res.status(500).json({ error: error.message || "Erro ao gerar mensagens por data" });
+        console.error('[generate-by-date] Erro ao gerar mensagens:', error);
+        console.error('[generate-by-date] Stack trace:', error.stack);
+        res.status(500).json({
+            error: error.message || "Erro ao gerar mensagens por data",
+            details: error.stack
+        });
     }
 });
 
@@ -1434,7 +1473,11 @@ app.delete('/api/blocked/:id', (req, res) => {
 app.post('/api/queue/add-items', async (req, res) => {
     const { items, send_mode } = req.body;
 
+    console.log(`[add-items] Recebida requisição para adicionar ${items?.length || 0} itens`);
+    console.log('[add-items] Modo de envio:', send_mode);
+
     if (!Array.isArray(items) || items.length === 0) {
+        console.error('[add-items] Erro: array de itens inválido ou vazio');
         res.status(400).json({ error: "Items array is required" });
         return;
     }
@@ -1442,72 +1485,164 @@ app.post('/api/queue/add-items', async (req, res) => {
     try {
         let inserted = 0;
         let skipped = 0;
+        const errors = [];
 
-        for (const item of items) {
-            // Check if item already exists (same client, installment, type, and pending)
-            const existing = await new Promise((resolve, reject) => {
-                db.get(
-                    `SELECT id FROM queue_items 
-                     WHERE client_code = ?
-                                    AND installment_id = ?
-                                        AND message_type = ?
-                                            AND status = 'PENDING'`,
-                    [item.code, item.id, item.messageType],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    }
-                );
-            });
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
 
-            if (existing) {
+            // Validar campos obrigatórios
+            if (!item.code) {
+                console.error(`[add-items] Item ${i}: código do cliente ausente`, item);
+                errors.push({ index: i, error: 'Código do cliente ausente', item });
                 skipped++;
-                continue; // Skip duplicate
+                continue;
+            }
+
+            if (!item.clientName) {
+                console.error(`[add-items] Item ${i}: nome do cliente ausente`, item);
+                errors.push({ index: i, error: 'Nome do cliente ausente', item });
+                skipped++;
+                continue;
+            }
+
+            if (!item.dueDate) {
+                console.error(`[add-items] Item ${i}: data de vencimento ausente`, item);
+                errors.push({ index: i, error: 'Data de vencimento ausente', item });
+                skipped++;
+                continue;
+            }
+
+            console.log(`[add-items] Processando item ${i}: ID="${item.id}", Cliente="${item.code}", Nome="${item.clientName}"`);
+
+            // Check if item already exists (same client, installment, type, and pending)
+            try {
+                const existing = await new Promise((resolve, reject) => {
+                    db.get(
+                        `SELECT id FROM queue_items 
+                         WHERE client_code = ?
+                                        AND installment_id = ?
+                                            AND message_type = ?
+                                                AND status = 'PENDING'`,
+                        [item.code, item.id, item.messageType],
+                        (err, row) => {
+                            if (err) reject(err);
+                            else resolve(row);
+                        }
+                    );
+                });
+
+                if (existing) {
+                    console.log(`[add-items] ❌ DUPLICADO encontrado:`);
+                    console.log(`  - Item atual: ID="${item.id}", Cliente="${item.code}", Nome="${item.clientName}"`);
+                    console.log(`  - Vencimento: ${item.dueDate}, Valor: ${item.installmentValue}`);
+                    console.log(`  - Tipo: ${item.messageType}`);
+                    console.log(`  - Já existe na fila com ID do banco: ${existing.id}`);
+                    console.log(`  - Motivo: Mesmo cliente (${item.code}) + mesmo installment_id (${item.id}) + mesmo tipo (${item.messageType}) + status PENDING`);
+
+                    // Registrar log de duplicata
+                    console.log(`[add-items] Tentando inserir log de duplicata para ${item.id}`);
+                    db.run(
+                        `INSERT INTO duplicate_logs (
+                            item_id, client_code, client_name, due_date, 
+                            installment_value, message_type, existing_queue_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            item.id,
+                            item.code,
+                            item.clientName,
+                            item.dueDate,
+                            item.installmentValue ? item.installmentValue.toString() : '0',
+                            item.messageType,
+                            existing.id
+                        ],
+                        function (err) {
+                            if (err) {
+                                console.error('[add-items] ❌ Erro ao salvar log de duplicata:', err);
+                            } else {
+                                console.log(`[add-items] ✅ Log de duplicata salvo com sucesso. ID: ${this.lastID}`);
+                            }
+                        }
+                    );
+
+                    skipped++;
+                    continue; // Skip duplicate
+                }
+            } catch (err) {
+                console.error(`[add-items] Item ${i}: erro ao verificar duplicata:`, err);
+                errors.push({ index: i, error: 'Erro ao verificar duplicata: ' + err.message, item });
+                skipped++;
+                continue;
             }
 
             // Insert new item
-            await new Promise((resolve, reject) => {
-                db.run(
-                    `INSERT INTO queue_items(
-                        client_code, client_name, cpf, phone, installment_id,
-                        installment_value, due_date, emission_date, message_content, message_type,
-                        send_mode, status, description, created_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, CURRENT_TIMESTAMP)`,
-                    [
-                        item.code,
-                        item.clientName,
-                        item.cpf,
-                        item.phone || item.fone1 || item.fone2,
-                        item.id,
-                        typeof item.installmentValue === 'number'
-                            ? item.installmentValue.toFixed(2)
-                            : item.installmentValue,
-                        item.dueDate,
-                        item.emissionDate,
-                        item.messageContent,
-                        item.messageType,
-                        send_mode || 'MANUAL',
-                        item.description || item.descricao || ''
-                    ],
-                    function (err) {
-                        if (err) reject(err);
-                        else {
-                            inserted++;
-                            resolve();
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run(
+                        `INSERT INTO queue_items(
+                            client_code, client_name, cpf, phone, installment_id,
+                            installment_value, due_date, emission_date, message_content, message_type,
+                            send_mode, status, description, created_at
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, CURRENT_TIMESTAMP)`,
+                        [
+                            item.code,
+                            item.clientName,
+                            item.cpf,
+                            item.phone || item.fone1 || item.fone2,
+                            item.id,
+                            typeof item.installmentValue === 'number'
+                                ? item.installmentValue.toFixed(2)
+                                : item.installmentValue,
+                            item.dueDate,
+                            item.emissionDate,
+                            item.messageContent,
+                            item.messageType,
+                            send_mode || 'MANUAL',
+                            item.description || item.descricao || ''
+                        ],
+                        function (err) {
+                            if (err) {
+                                console.error(`[add-items] Item ${i} (${item.code}): erro ao inserir:`, err);
+                                reject(err);
+                            } else {
+                                console.log(`[add-items] Item ${i} (${item.code}): inserido com sucesso (ID: ${this.lastID})`);
+                                inserted++;
+                                resolve();
+                            }
                         }
-                    }
-                );
-            });
+                    );
+                });
+            } catch (err) {
+                console.error(`[add-items] Item ${i}: erro ao inserir no banco:`, err);
+                errors.push({ index: i, error: 'Erro ao inserir: ' + err.message, item });
+                skipped++;
+            }
+        }
+
+        console.log(`[add-items] Processamento concluído: ${inserted} inseridos, ${skipped} pulados de ${items.length} total`);
+
+        if (errors.length > 0) {
+            console.error(`[add-items] ${errors.length} erros encontrados:`, errors);
+        }
+
+        // Log summary
+        if (inserted > 0 || skipped > 0) {
+            logEvent('INFO', `Itens adicionados à fila: ${inserted} inseridos, ${skipped} duplicados`, JSON.stringify({ inserted, skipped, total: items.length }));
         }
 
         res.json({
             message: "Items processed",
             inserted,
             skipped,
-            total: items.length
+            total: items.length,
+            errors: errors.length > 0 ? errors : undefined
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('[add-items] Erro crítico no processamento:', error);
+        console.error('[add-items] Stack trace:', error.stack);
+        res.status(500).json({
+            error: error.message || 'Erro ao adicionar itens',
+            details: error.stack
+        });
     }
 });
 
@@ -1530,7 +1665,8 @@ app.put('/api/queue/items/:id/select', (req, res) => {
 });
 
 // Delete multiple queue items
-app.delete('/api/queue/items/bulk', (req, res) => {
+// Delete multiple queue items
+app.delete('/api/queue/items/bulk', async (req, res) => {
     const { ids } = req.body;
 
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -1538,16 +1674,46 @@ app.delete('/api/queue/items/bulk', (req, res) => {
         return;
     }
 
-    const placeholders = ids.map(() => '?').join(',');
-    const query = `DELETE FROM queue_items WHERE id IN(${placeholders})`;
+    const CHUNK_SIZE = 500;
+    let deletedCount = 0;
+    let errors = [];
 
-    db.run(query, ids, function (err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+    // Process in chunks to avoid SQLite variable limit
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + CHUNK_SIZE);
+        const placeholders = chunk.map(() => '?').join(',');
+        const query = `DELETE FROM queue_items WHERE id IN(${placeholders})`;
+
+        try {
+            await new Promise((resolve, reject) => {
+                db.run(query, chunk, function (err) {
+                    if (err) reject(err);
+                    else {
+                        deletedCount += this.changes;
+                        resolve();
+                    }
+                });
+            });
+        } catch (err) {
+            console.error(`Error deleting chunk ${i}:`, err);
+            errors.push(err.message);
         }
-        res.json({ message: "Items deleted", deleted: this.changes });
-    });
+    }
+
+    if (errors.length > 0 && deletedCount === 0) {
+        res.status(500).json({ error: "Failed to delete items", details: errors });
+    } else {
+        // Log deletion
+        if (deletedCount > 0) {
+            logEvent('INFO', `Exclusão em massa: ${deletedCount} itens removidos`, JSON.stringify({ deleted: deletedCount, requested: ids.length }));
+        }
+
+        res.json({
+            message: "Items processed",
+            deleted: deletedCount,
+            errors: errors.length > 0 ? errors : undefined
+        });
+    }
 });
 
 // Delete single queue item
@@ -1559,6 +1725,12 @@ app.delete('/api/queue/:id', (req, res) => {
             res.status(500).json({ error: err.message });
             return;
         }
+
+        // Log deletion
+        if (this.changes > 0) {
+            logEvent('INFO', `Item excluído da fila`, `ID: ${id}`);
+        }
+
         res.json({ message: "Item deleted", deleted: this.changes });
     });
 });
@@ -1621,7 +1793,7 @@ function logError(tipo, mensagem, detalhes, client_code, phone) {
 function logScheduler(mensagem, detalhes = '') {
     db.run(
         "INSERT INTO error_logs (tipo, mensagem, detalhes) VALUES (?, ?, ?)",
-        ['SCHEDULER', mensagem, detalhes],
+        ['AGENDAMENTO', mensagem, detalhes],
         (err) => {
             if (err) {
                 console.error("Error logging scheduler:", err);
@@ -1629,6 +1801,19 @@ function logScheduler(mensagem, detalhes = '') {
         }
     );
     console.log(`Scheduler: ${mensagem}`);
+}
+
+// Helper function to log general events
+function logEvent(tipo, mensagem, detalhes = '') {
+    db.run(
+        "INSERT INTO error_logs (tipo, mensagem, detalhes) VALUES (?, ?, ?)",
+        [tipo, mensagem, detalhes],
+        (err) => {
+            if (err) {
+                console.error("Error logging event:", err);
+            }
+        }
+    );
 }
 
 // Send selected items
@@ -1664,6 +1849,9 @@ app.post('/api/queue/send-selected', async (req, res) => {
                 // Send message
                 await sendMessageViaWAPI(item.phone, item.message_content);
 
+                // Log successful send
+                logEvent('INFO', `Mensagem enviada para ${item.client_name}`, `Cliente: ${item.client_code}, Telefone: ${item.phone}`);
+
                 // Update status
                 db.run(
                     "UPDATE queue_items SET status = 'SENT', sent_date = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1691,6 +1879,11 @@ app.post('/api/queue/send-selected', async (req, res) => {
                 errors++;
                 results.push({ id: item.id, success: false, error: error.message });
             }
+        }
+
+        // Log summary
+        if (sent > 0 || errors > 0) {
+            logEvent('INFO', `Envio concluído: ${sent} enviadas, ${errors} erros`, JSON.stringify({ sent, errors, total: items.length }));
         }
 
         res.json({
@@ -1861,6 +2054,110 @@ app.post('/api/queue/send-selected', async (req, res) => {
     } catch (error) {
         console.error("Error sending selected items:", error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Get error logs
+app.get('/api/logs', (req, res) => {
+    db.all("SELECT * FROM error_logs ORDER BY data_hora DESC LIMIT 100", (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows || []);
+    });
+});
+
+// Delete error logs
+app.delete('/api/logs', (req, res) => {
+    const { ids, all } = req.body;
+
+    if (all) {
+        db.run("DELETE FROM error_logs", (err) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            console.log('Todos os logs de sistema foram excluídos');
+            res.json({ message: "Todos os logs foram excluídos" });
+        });
+    } else if (ids && Array.isArray(ids) && ids.length > 0) {
+        const placeholders = ids.map(() => '?').join(',');
+        db.run(`DELETE FROM error_logs WHERE id IN (${placeholders})`, ids, function (err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            console.log(`${this.changes} logs de sistema excluídos`);
+            res.json({ message: `${ids.length} logs excluídos`, deleted: this.changes });
+        });
+    } else {
+        res.status(400).json({ error: "IDs ou flag 'all' necessários" });
+    }
+});
+
+// --- Duplicate Logs API ---
+
+app.get('/api/logs/duplicates', (req, res) => {
+    const { startDate, endDate, type, client } = req.query;
+
+    let query = "SELECT * FROM duplicate_logs WHERE 1=1";
+    const params = [];
+
+    if (startDate) {
+        query += " AND date(created_at) >= date(?)";
+        params.push(startDate);
+    }
+
+    if (endDate) {
+        query += " AND date(created_at) <= date(?)";
+        params.push(endDate);
+    }
+
+    if (type && type !== 'all') {
+        query += " AND message_type = ?";
+        params.push(type);
+    }
+
+    if (client) {
+        query += " AND (client_name LIKE ? OR client_code LIKE ? OR item_id LIKE ?)";
+        params.push(`%${client}%`, `%${client}%`, `%${client}%`);
+    }
+
+    query += " ORDER BY created_at DESC LIMIT 500";
+
+    db.all(query, params, (err, rows) => {
+        if (err) {
+            console.error('Erro ao buscar logs de duplicatas:', err);
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+app.delete('/api/logs/duplicates', (req, res) => {
+    const { ids, all } = req.body;
+
+    if (all) {
+        db.run("DELETE FROM duplicate_logs", (err) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({ message: "Todos os logs de duplicatas foram excluídos" });
+        });
+    } else if (ids && Array.isArray(ids) && ids.length > 0) {
+        const placeholders = ids.map(() => '?').join(',');
+        db.run(`DELETE FROM duplicate_logs WHERE id IN (${placeholders})`, ids, (err) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({ message: `${ids.length} logs excluídos` });
+        });
+    } else {
+        res.status(400).json({ error: "IDs ou flag 'all' necessários" });
     }
 });
 
