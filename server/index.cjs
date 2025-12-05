@@ -35,6 +35,62 @@ const authMiddleware = (req, res, next) => {
     next();
 };
 
+// Utility function to format Brazilian phone numbers
+const formatBrazilianPhone = (phone) => {
+    if (!phone) return null;
+
+    // Convert to string and extract only the first phone if there are multiple
+    let phoneStr = phone.toString().trim();
+
+    // Common separators for multiple phones: / - | ; ,
+    const separators = [' / ', '/', ' - ', ' | ', '|', ';', ',', '  '];
+    for (const sep of separators) {
+        if (phoneStr.includes(sep)) {
+            const parts = phoneStr.split(sep).filter(p => p.trim().length > 0);
+            if (parts.length > 0) {
+                phoneStr = parts[0].trim();
+                break;
+            }
+        }
+    }
+
+    // Remove all non-numeric characters
+    const cleaned = phoneStr.replace(/\D/g, '');
+
+    // If already has country code (starts with 55 and has 12-13 digits)
+    if (cleaned.startsWith('55') && (cleaned.length === 12 || cleaned.length === 13)) {
+        return cleaned;
+    }
+
+    // If has 11 digits (DDD + 9 digits), add country code
+    if (cleaned.length === 11) {
+        return '55' + cleaned;
+    }
+
+    // If has 10 digits (DDD + 8 digits - old format), add country code and 9
+    if (cleaned.length === 10) {
+        const ddd = cleaned.substring(0, 2);
+        const number = cleaned.substring(2);
+        return '55' + ddd + '9' + number;
+    }
+
+    // If has 9 digits (without DDD), cannot format
+    if (cleaned.length === 9) {
+        console.warn(`Phone without DDD: ${phone}`);
+        return null;
+    }
+
+    // If has 8 digits (old format without DDD), cannot format
+    if (cleaned.length === 8) {
+        console.warn(`Phone without DDD (old): ${phone}`);
+        return null;
+    }
+
+    // Invalid format
+    console.warn(`Invalid phone: ${phone} (${cleaned.length} digits)`);
+    return null;
+};
+
 // --- Authentication API ---
 
 // Login endpoint
@@ -1055,6 +1111,10 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
                         // Criar ID único combinando sequência de venda, número da parcela e código do cliente
                         const uniqueId = `${getValue(client, 'sequenciavenda') || '0'}-${getValue(client, 'numeroparcela') || '0'}-${getValue(client, 'codigocliente')}`;
 
+                        // Format phone number
+                        const rawPhone = getValue(client, 'fone1') || getValue(client, 'fone2');
+                        const formattedPhone = formatBrazilianPhone(rawPhone);
+
                         return {
                             id: uniqueId,
                             code: getValue(client, 'codigocliente'),
@@ -1069,7 +1129,7 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
                             messageContent: message,
                             messageType: type,
                             status: 'PREVIEW',
-                            phone: getValue(client, 'fone1') || '',
+                            phone: formattedPhone,
                             description: desc
                         };
                     });
