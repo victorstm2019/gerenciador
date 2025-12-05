@@ -3,18 +3,118 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const db = require('./db.cjs');
 const sql = require('mssql');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = 3002;
+
+// Session storage (in-memory)
+const activeSessions = new Map(); // Map<token, { userId, username, createdAt }>
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' })); // Aumentado de 100kb (padrão) para 50mb
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
+// Authentication Middleware
+const authMiddleware = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Token de autenticação não fornecido' });
+    }
+
+    const token = authHeader.substring(7); // Remove 'Bearer '
+    const session = activeSessions.get(token);
+
+    if (!session) {
+        return res.status(401).json({ error: 'Token inválido ou expirado' });
+    }
+
+    // Attach user info to request
+    req.user = session;
+    next();
+};
+
+// --- Authentication API ---
+
+// Login endpoint
+app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Usuário e senha são obrigatórios' });
+    }
+
+    db.get("SELECT * FROM users WHERE username = ? AND password = ?", [username, password], (err, user) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        if (!user) {
+            return res.status(401).json({ error: 'Usuário ou senha incorretos' });
+        }
+
+        if (user.blocked === 1) {
+            return res.status(403).json({ error: 'Usuário bloqueado' });
+        }
+
+        // Generate session token
+        const token = crypto.randomUUID();
+
+        // Store session
+        activeSessions.set(token, {
+            userId: user.id,
+            username: user.username,
+            createdAt: new Date()
+        });
+
+        // Return user data with token
+        res.json({
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            permissions: JSON.parse(user.permissions || '[]'),
+            first_login: user.first_login,
+            token: token
+        });
+    });
+});
+
+// Reset password endpoint
+app.post('/api/auth/reset-password', authMiddleware, (req, res) => {
+    const { username } = req.body;
+
+    if (!username) {
+        return res.status(400).json({ error: 'Nome de usuário é obrigatório' });
+    }
+
+    // Reset to default password (same as username)
+    db.run("UPDATE users SET password = ?, first_login = 1 WHERE username = ?", [username, username], function (err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Usuário não encontrado' });
+        }
+
+        res.json({ message: 'Senha resetada com sucesso' });
+    });
+});
+
+// Logout endpoint (optional, for future use)
+app.post('/api/auth/logout', authMiddleware, (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader.substring(7);
+
+    activeSessions.delete(token);
+    res.json({ message: 'Logout realizado com sucesso' });
+});
+
 // --- Message Config API ---
 
 // Get Config
-app.get('/api/config', (req, res) => {
+app.get('/api/config', authMiddleware, (req, res) => {
     db.get("SELECT * FROM message_config LIMIT 1", (err, row) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -25,7 +125,7 @@ app.get('/api/config', (req, res) => {
 });
 
 // Update Config
-app.post('/api/config', (req, res) => {
+app.post('/api/config', authMiddleware, (req, res) => {
     const {
         send_time,
         auto_send_enabled,
@@ -82,7 +182,7 @@ app.post('/api/config', (req, res) => {
 // --- Database Connection API ---
 
 // Get Connection Config
-app.get('/api/connection', (req, res) => {
+app.get('/api/connection', authMiddleware, (req, res) => {
     db.get("SELECT * FROM db_connections ORDER BY id DESC LIMIT 1", (err, row) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -100,7 +200,7 @@ app.get('/api/connection', (req, res) => {
 });
 
 // Save Connection Config
-app.post('/api/connection', (req, res) => {
+app.post('/api/connection', authMiddleware, (req, res) => {
     const { host, user, password, database } = req.body;
 
     // Check if config exists
@@ -135,7 +235,7 @@ app.post('/api/connection', (req, res) => {
 });
 
 // Test Connection
-app.post('/api/connection/test', async (req, res) => {
+app.post('/api/connection/test', authMiddleware, async (req, res) => {
     const { host, user, password, database } = req.body;
 
     const config = {
@@ -161,7 +261,7 @@ app.post('/api/connection/test', async (req, res) => {
 // --- Saved Queries API ---
 
 // Save Query
-app.post('/api/query/save', (req, res) => {
+app.post('/api/query/save', authMiddleware, (req, res) => {
     const { name, query_text } = req.body;
     db.run("INSERT INTO saved_queries (name, query_text) VALUES (?, ?)", [name, query_text], function (err) {
         if (err) {
@@ -173,7 +273,7 @@ app.post('/api/query/save', (req, res) => {
 });
 
 // Get Saved Queries
-app.get('/api/query/saved', (req, res) => {
+app.get('/api/query/saved', authMiddleware, (req, res) => {
     db.all("SELECT * FROM saved_queries ORDER BY created_at DESC LIMIT 10", (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -184,7 +284,7 @@ app.get('/api/query/saved', (req, res) => {
 });
 
 // Delete Saved Query
-app.delete('/api/query/saved/:id', (req, res) => {
+app.delete('/api/query/saved/:id', authMiddleware, (req, res) => {
     const { id } = req.params;
     db.run("DELETE FROM saved_queries WHERE id = ?", [id], function (err) {
         if (err) {
@@ -196,7 +296,7 @@ app.delete('/api/query/saved/:id', (req, res) => {
 });
 
 // Execute Query
-app.post('/api/query/execute', async (req, res) => {
+app.post('/api/query/execute', authMiddleware, async (req, res) => {
     const { query } = req.body;
 
     // Get credentials from DB
@@ -287,7 +387,7 @@ app.post('/api/auth/reset-password', (req, res) => {
 });
 
 // Change password (for first login or password change)
-app.put('/api/users/:id/change-password', (req, res) => {
+app.put('/api/users/:id/change-password', authMiddleware, (req, res) => {
     const { id } = req.params;
     const { password } = req.body;
     db.run("UPDATE users SET password = ?, first_login = 0 WHERE id = ?", [password, id], function (err) {
@@ -302,7 +402,7 @@ app.put('/api/users/:id/change-password', (req, res) => {
 // --- User Management API (for UserPermissions page) ---
 
 // Get all users
-app.get('/api/users', (req, res) => {
+app.get('/api/users', authMiddleware, (req, res) => {
     db.all("SELECT id, username, role, permissions, blocked FROM users ORDER BY username", (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -317,7 +417,7 @@ app.get('/api/users', (req, res) => {
 });
 
 // Create new user
-app.post('/api/users', (req, res) => {
+app.post('/api/users', authMiddleware, (req, res) => {
     const { username, password, role, permissions } = req.body;
     const permissionsJson = JSON.stringify(permissions || []);
 
@@ -337,7 +437,7 @@ app.post('/api/users', (req, res) => {
 });
 
 // Update user permissions
-app.put('/api/users/:id/permissions', (req, res) => {
+app.put('/api/users/:id/permissions', authMiddleware, (req, res) => {
     const { id } = req.params;
     const { permissions } = req.body;
     const permissionsJson = JSON.stringify(permissions || []);
@@ -352,7 +452,7 @@ app.put('/api/users/:id/permissions', (req, res) => {
 });
 
 // Update user password (from UserPermissions page)
-app.put('/api/users/:id/password', (req, res) => {
+app.put('/api/users/:id/password', authMiddleware, (req, res) => {
     const { id } = req.params;
     const { password } = req.body;
 
@@ -366,7 +466,7 @@ app.put('/api/users/:id/password', (req, res) => {
 });
 
 // Block/Unblock user
-app.put('/api/users/:id/block', (req, res) => {
+app.put('/api/users/:id/block', authMiddleware, (req, res) => {
     const { id } = req.params;
     const { blocked } = req.body; // true or false
 
@@ -380,7 +480,7 @@ app.put('/api/users/:id/block', (req, res) => {
 });
 
 // Delete user
-app.delete('/api/users/:id', (req, res) => {
+app.delete('/api/users/:id', authMiddleware, (req, res) => {
     const { id } = req.params;
     db.run("DELETE FROM users WHERE id = ?", [id], function (err) {
         if (err) {
@@ -394,7 +494,7 @@ app.delete('/api/users/:id', (req, res) => {
 // --- W-API Configuration API ---
 
 // Get W-API Configuration
-app.get('/api/wapi/config', (req, res) => {
+app.get('/api/wapi/config', authMiddleware, (req, res) => {
     db.get("SELECT * FROM wapi_config ORDER BY id DESC LIMIT 1", (err, row) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -409,7 +509,7 @@ app.get('/api/wapi/config', (req, res) => {
 });
 
 // Save W-API Configuration
-app.post('/api/wapi/config', (req, res) => {
+app.post('/api/wapi/config', authMiddleware, (req, res) => {
     const { instance_id, bearer_token } = req.body;
 
     // Check if config exists
@@ -444,7 +544,7 @@ app.post('/api/wapi/config', (req, res) => {
 });
 
 // Test W-API Connection
-app.post('/api/wapi/test', async (req, res) => {
+app.post('/api/wapi/test', authMiddleware, async (req, res) => {
     const { instance_id, bearer_token } = req.body;
 
     if (!instance_id || !bearer_token) {
@@ -487,7 +587,7 @@ app.post('/api/wapi/test', async (req, res) => {
 });
 
 // Send Test Message via W-API
-app.post('/api/wapi/send-test', async (req, res) => {
+app.post('/api/wapi/send-test', authMiddleware, async (req, res) => {
     const { instance_id, bearer_token, phone, message } = req.body;
 
     if (!instance_id || !bearer_token || !phone) {
@@ -536,7 +636,7 @@ app.post('/api/wapi/send-test', async (req, res) => {
 // --- Queue Test Generation API ---
 
 // Generate test messages from database
-app.post('/api/queue/generate-test', async (req, res) => {
+app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
     const { messageType, limit = 10 } = req.body; // 'reminder' or 'overdue'
 
     try {
@@ -755,7 +855,7 @@ app.post('/api/queue/generate-test', async (req, res) => {
 });
 
 // Generate batch messages (manual generation)
-app.post('/api/queue/generate-batch', async (req, res) => {
+app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
     const { types } = req.body; // ['reminder', 'overdue']
 
     if (!Array.isArray(types) || types.length === 0) {
@@ -1002,7 +1102,7 @@ app.post('/api/queue/generate-batch', async (req, res) => {
 });
 
 // Generate messages by date range
-app.post('/api/queue/generate-by-date', async (req, res) => {
+app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
     const { startDate, endDate } = req.body;
 
     if (!startDate || !endDate) {
@@ -1222,7 +1322,7 @@ app.post('/api/queue/generate-by-date', async (req, res) => {
 
 
 // Get all field mappings
-app.get('/api/field-mappings', (req, res) => {
+app.get('/api/field-mappings', authMiddleware, (req, res) => {
     db.all("SELECT * FROM field_mappings ORDER BY id", (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -1233,7 +1333,7 @@ app.get('/api/field-mappings', (req, res) => {
 });
 
 // Save/Update field mappings
-app.post('/api/field-mappings', (req, res) => {
+app.post('/api/field-mappings', authMiddleware, (req, res) => {
     const mappings = req.body; // Array of {message_variable, database_column}
 
     if (!Array.isArray(mappings)) {
@@ -1266,7 +1366,7 @@ app.post('/api/field-mappings', (req, res) => {
 });
 
 // Block specific installment
-app.post('/api/blocked/by-installment', (req, res) => {
+app.post('/api/blocked/by-installment', authMiddleware, (req, res) => {
     const { client_code, installment_id, client_name, reason } = req.body;
 
     const identifier = `${client_code}-${installment_id}`;
@@ -1287,7 +1387,7 @@ app.post('/api/blocked/by-installment', (req, res) => {
 });
 
 // Block all client messages
-app.post('/api/blocked/by-client', (req, res) => {
+app.post('/api/blocked/by-client', authMiddleware, (req, res) => {
     const { client_code, client_name, reason } = req.body;
 
     const sqlQuery = `INSERT INTO blocked_clients 
@@ -1309,7 +1409,7 @@ app.post('/api/blocked/by-client', (req, res) => {
 // --- Queue Management API ---
 
 // Get queue items with filters
-app.get('/api/queue/items', (req, res) => {
+app.get('/api/queue/items', authMiddleware, (req, res) => {
     const { status, date_from, date_to } = req.query;
     let query = "SELECT * FROM queue_items WHERE 1=1";
     const params = [];
@@ -1357,7 +1457,7 @@ app.get('/api/queue/items', (req, res) => {
 });
 
 // Get today's queue items (changed to get all items for better UX)
-app.get('/api/queue/today', async (req, res) => {
+app.get('/api/queue/today', authMiddleware, async (req, res) => {
     const query = `
         SELECT 
             q.*,
@@ -1447,7 +1547,7 @@ app.get('/api/queue/today', async (req, res) => {
 });
 
 // Get blocked clients
-app.get('/api/blocked', (req, res) => {
+app.get('/api/blocked', authMiddleware, (req, res) => {
     db.all("SELECT * FROM blocked_clients ORDER BY created_at DESC", (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -1458,7 +1558,7 @@ app.get('/api/blocked', (req, res) => {
 });
 
 // Delete blocked client
-app.delete('/api/blocked/:id', (req, res) => {
+app.delete('/api/blocked/:id', authMiddleware, (req, res) => {
     const { id } = req.params;
     db.run("DELETE FROM blocked_clients WHERE id = ?", [id], function (err) {
         if (err) {
@@ -1470,7 +1570,7 @@ app.delete('/api/blocked/:id', (req, res) => {
 });
 
 // Add items to queue (from generate-batch)
-app.post('/api/queue/add-items', async (req, res) => {
+app.post('/api/queue/add-items', authMiddleware, async (req, res) => {
     const { items, send_mode } = req.body;
 
     console.log(`[add-items] Recebida requisição para adicionar ${items?.length || 0} itens`);
@@ -1647,7 +1747,7 @@ app.post('/api/queue/add-items', async (req, res) => {
 });
 
 // Toggle item selection
-app.put('/api/queue/items/:id/select', (req, res) => {
+app.put('/api/queue/items/:id/select', authMiddleware, (req, res) => {
     const { id } = req.params;
     const { selected } = req.body;
 
@@ -1666,7 +1766,7 @@ app.put('/api/queue/items/:id/select', (req, res) => {
 
 // Delete multiple queue items
 // Delete multiple queue items
-app.delete('/api/queue/items/bulk', async (req, res) => {
+app.delete('/api/queue/items/bulk', authMiddleware, async (req, res) => {
     const { ids } = req.body;
 
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -1717,7 +1817,7 @@ app.delete('/api/queue/items/bulk', async (req, res) => {
 });
 
 // Delete single queue item
-app.delete('/api/queue/:id', (req, res) => {
+app.delete('/api/queue/:id', authMiddleware, (req, res) => {
     const { id } = req.params;
 
     db.run('DELETE FROM queue_items WHERE id = ?', [id], function (err) {
@@ -1817,7 +1917,7 @@ function logEvent(tipo, mensagem, detalhes = '') {
 }
 
 // Send selected items
-app.post('/api/queue/send-selected', async (req, res) => {
+app.post('/api/queue/send-selected', authMiddleware, async (req, res) => {
     try {
         // Get selected items
         const items = await new Promise((resolve, reject) => {
@@ -1900,7 +2000,7 @@ app.post('/api/queue/send-selected', async (req, res) => {
 });
 
 // Get error logs
-app.get('/api/logs', (req, res) => {
+app.get('/api/logs', authMiddleware, (req, res) => {
     db.all("SELECT * FROM error_logs ORDER BY data_hora DESC LIMIT 100", (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -2069,7 +2169,7 @@ app.get('/api/logs', (req, res) => {
 });
 
 // Delete error logs
-app.delete('/api/logs', (req, res) => {
+app.delete('/api/logs', authMiddleware, (req, res) => {
     const { ids, all } = req.body;
 
     if (all) {
@@ -2098,7 +2198,7 @@ app.delete('/api/logs', (req, res) => {
 
 // --- Duplicate Logs API ---
 
-app.get('/api/logs/duplicates', (req, res) => {
+app.get('/api/logs/duplicates', authMiddleware, (req, res) => {
     const { startDate, endDate, type, client } = req.query;
 
     let query = "SELECT * FROM duplicate_logs WHERE 1=1";
@@ -2136,7 +2236,7 @@ app.get('/api/logs/duplicates', (req, res) => {
     });
 });
 
-app.delete('/api/logs/duplicates', (req, res) => {
+app.delete('/api/logs/duplicates', authMiddleware, (req, res) => {
     const { ids, all } = req.body;
 
     if (all) {

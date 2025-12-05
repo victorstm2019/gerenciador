@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../services/api';
 
 interface User {
   id: number;
@@ -39,8 +40,7 @@ const UserPermissions: React.FC = () => {
 
   // Fetch users
   useEffect(() => {
-    fetch('/api/users')
-      .then(res => res.json())
+    api.get<User[]>('/api/users')
       .then(data => {
         setUsers(data || []);
         setLoading(false);
@@ -59,11 +59,7 @@ const UserPermissions: React.FC = () => {
       : [...user.permissions, permission];
     // Optimistic UI update
     setUsers(users.map(u => (u.id === userId ? { ...u, permissions: newPermissions } : u)));
-    fetch(`/api/users/${userId}/permissions`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissions: newPermissions }),
-    }).catch(err => {
+    api.put(`/api/users/${userId}/permissions`, { permissions: newPermissions }).catch(err => {
       console.error('Error updating permissions:', err);
       // Revert on error
       setUsers(users);
@@ -73,11 +69,7 @@ const UserPermissions: React.FC = () => {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUser) return;
-    await fetch(`/api/users/${selectedUser.id}/password`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: newPassword }),
-    });
+    await api.put(`/api/users/${selectedUser.id}/password`, { password: newPassword });
     setIsModalOpen(false);
     setNewPassword('');
     setSelectedUser(null);
@@ -98,11 +90,7 @@ const UserPermissions: React.FC = () => {
     if (!confirm(`Tem certeza que deseja ${action} o usuário "${user.username}"?`)) return;
 
     try {
-      await fetch(`/api/users/${user.id}/block`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blocked: newStatus === 1 }),
-      });
+      await api.put(`/api/users/${user.id}/block`, { blocked: newStatus === 1 });
       setUsers(users.map(u => (u.id === user.id ? { ...u, blocked: newStatus } : u)));
     } catch (err) {
       console.error('Error blocking user:', err);
@@ -114,9 +102,7 @@ const UserPermissions: React.FC = () => {
     if (!confirm(`Tem certeza que deseja EXCLUIR o usuário "${user.username}"? Esta ação não pode ser desfeita.`)) return;
 
     try {
-      await fetch(`/api/users/${user.id}`, {
-        method: 'DELETE',
-      });
+      await api.delete(`/api/users/${user.id}`);
       setUsers(users.filter(u => u.id !== user.id));
     } catch (err) {
       console.error('Error deleting user:', err);
@@ -130,17 +116,13 @@ const UserPermissions: React.FC = () => {
       alert('Preencha usuário e senha');
       return;
     }
-    const resp = await fetch('/api/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newUserForm),
-    });
-    if (resp.ok) {
-      const refreshed = await fetch('/api/users').then(r => r.json());
+    try {
+      await api.post('/api/users', newUserForm);
+      const refreshed = await api.get<User[]>('/api/users');
       setUsers(refreshed || []);
       setIsCreateModalOpen(false);
       setNewUserForm({ username: '', password: '', role: 'user', permissions: [] });
-    } else {
+    } catch (err) {
       alert('Erro ao criar usuário');
     }
   };

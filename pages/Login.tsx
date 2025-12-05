@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../services/api';
 
 interface User {
   id: number;
@@ -27,8 +28,7 @@ const Login: React.FC = () => {
 
   // Fetch users on mount
   useEffect(() => {
-    fetch('/api/users/list')
-      .then(res => res.json())
+    api.get<User[]>('/api/users/list')
       .then(data => {
         setUsers(data || []);
       })
@@ -45,19 +45,7 @@ const Login: React.FC = () => {
     }
 
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        alert(errorData.error || 'Usuário ou senha incorretos');
-        return;
-      }
-
-      const userData: LoginResponse = await response.json();
+      const userData = await api.post<LoginResponse>('/api/auth/login', { username, password });
 
       // Check if first login
       if (userData.first_login === 1) {
@@ -68,9 +56,9 @@ const Login: React.FC = () => {
         localStorage.setItem('user', JSON.stringify(userData));
         navigate('/connections');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Login error:', err);
-      alert('Erro ao fazer login');
+      alert(err.message || 'Erro ao fazer login');
     }
   };
 
@@ -85,21 +73,12 @@ const Login: React.FC = () => {
     }
 
     try {
-      const response = await fetch('/api/auth/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }),
-      });
-
-      if (response.ok) {
-        alert('Senha resetada');
-        setPassword('');
-      } else {
-        alert('Erro ao resetar senha');
-      }
-    } catch (err) {
+      await api.post('/api/auth/reset-password', { username });
+      alert('Senha resetada');
+      setPassword('');
+    } catch (err: any) {
       console.error('Reset error:', err);
-      alert('Erro ao resetar senha');
+      alert(err.message || 'Erro ao resetar senha');
     }
   };
 
@@ -119,23 +98,15 @@ const Login: React.FC = () => {
     if (!loggedUser) return;
 
     try {
-      const response = await fetch(`/api/users/${loggedUser.id}/change-password`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: newPassword }),
-      });
+      await api.put(`/api/users/${loggedUser.id}/change-password`, { password: newPassword });
 
-      if (response.ok) {
-        // Update user data and navigate
-        const updatedUser = { ...loggedUser, first_login: 0 };
-        localStorage.setItem('user', JSON.stringify(updatedUser));
-        navigate('/connections');
-      } else {
-        alert('Erro ao alterar senha');
-      }
-    } catch (err) {
+      // Update user data and navigate
+      const updatedUser = { ...loggedUser, first_login: 0 };
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      navigate('/connections');
+    } catch (err: any) {
       console.error('Change password error:', err);
-      alert('Erro ao alterar senha');
+      alert(err.message || 'Erro ao alterar senha');
     }
   };
 

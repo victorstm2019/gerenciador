@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../services/api';
 
 interface FieldMapping {
   id?: number;
@@ -34,8 +35,8 @@ const MessageConfig: React.FC = () => {
   useEffect(() => {
     setIsLoading(true);
     Promise.all([
-      fetch('/api/config').then(res => res.json()),
-      fetch('/api/field-mappings').then(res => res.json())
+      api.get<any>('/api/config'),
+      api.get<FieldMapping[]>('/api/field-mappings')
     ])
       .then(([configData, mappingsData]) => {
         if (configData) {
@@ -65,50 +66,40 @@ const MessageConfig: React.FC = () => {
 
   const saveConfig = () => {
     setIsLoading(true);
-    fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        send_time: sendTime,
-        auto_send_enabled: autoSendEnabled,
-        reminder_msg: reminderMsg,
-        reminder_enabled: enableReminder,
-        reminder_days: daysBefore,
-        reminder_repeat_times: reminderRepeatTimes,
-        reminder_repeat_interval_days: reminderRepeatInterval,
-        overdue_msg: overdueMsg,
-        overdue_enabled: enableOverdue,
-        overdue_days: daysAfter,
-        overdue_repeat_times: overdueRepeatTimes,
-        overdue_repeat_interval_days: overdueRepeatInterval
-      })
+    api.post('/api/config', {
+      send_time: sendTime,
+      auto_send_enabled: autoSendEnabled,
+      reminder_msg: reminderMsg,
+      reminder_enabled: enableReminder,
+      reminder_days: daysBefore,
+      reminder_repeat_times: reminderRepeatTimes,
+      reminder_repeat_interval_days: reminderRepeatInterval,
+      overdue_msg: overdueMsg,
+      overdue_enabled: enableOverdue,
+      overdue_days: daysAfter,
+      overdue_repeat_times: overdueRepeatTimes,
+      overdue_repeat_interval_days: overdueRepeatInterval
     })
-      .then(res => res.json())
       .then(() => {
         setIsLoading(false);
         alert('Configurações salvas!');
       })
       .catch(err => {
         setIsLoading(false);
-        alert('Erro ao salvar: ' + err);
+        alert('Erro ao salvar: ' + err.message);
       });
   };
 
   const saveMappings = () => {
     setIsLoading(true);
-    fetch('/api/field-mappings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(fieldMappings)
-    })
-      .then(res => res.json())
+    api.post('/api/field-mappings', fieldMappings)
       .then(() => {
         setIsLoading(false);
         alert('Mapeamentos salvos com sucesso!');
       })
       .catch(err => {
         setIsLoading(false);
-        alert('Erro ao salvar mapeamentos: ' + err);
+        alert('Erro ao salvar mapeamentos: ' + err.message);
       });
   };
 

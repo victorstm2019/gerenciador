@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../services/api';
 
 interface QueueItem {
     id: string;
@@ -86,8 +87,8 @@ const QueueHistory: React.FC = () => {
     const fetchData = () => {
         setLoading(true);
         Promise.all([
-            fetch('http://localhost:3002/api/queue/today').then(res => res.json()), // Changed to fetch today's queue by default
-            fetch('http://localhost:3002/api/blocked').then(res => res.json())
+            api.get<QueueItem[]>('/api/queue/today'),
+            api.get<BlockedClient[]>('/api/blocked')
         ])
             .then(([queueData, blockedData]) => {
                 setQueue(queueData || []);
@@ -103,25 +104,18 @@ const QueueHistory: React.FC = () => {
     const generateAndAddToQueue = (messageType: 'reminder' | 'overdue') => {
         setLoading(true);
         // 1. Generate the messages (preview)
-        fetch('http://localhost:3002/api/queue/generate-test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messageType, limit: 100 })
-        })
-            .then(res => res.json())
+        api.post<QueueItem[]>('/api/queue/generate-test', { messageType, limit: 100 })
             .then(data => {
                 if (Array.isArray(data)) {
                     // 2. Add them to the queue
-                    return fetch('http://localhost:3002/api/queue/add-items', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ items: data, send_mode: sendMode.toUpperCase() })
+                    return api.post<{ inserted: number, skipped: number }>('/api/queue/add-items', {
+                        items: data,
+                        send_mode: sendMode.toUpperCase()
                     });
                 } else {
                     throw new Error('Resposta inválida da API ao gerar');
                 }
             })
-            .then(res => res.json())
             .then(result => {
                 setLoading(false);
                 alert(`${result.inserted} itens adicionados à fila\n${result.skipped} duplicados ignorados`);
@@ -129,7 +123,7 @@ const QueueHistory: React.FC = () => {
             })
             .catch(err => {
                 setLoading(false);
-                alert('Erro ao gerar e adicionar à fila: ' + err);
+                alert('Erro ao gerar e adicionar à fila: ' + err.message);
             });
     };
 
@@ -157,12 +151,7 @@ const QueueHistory: React.FC = () => {
         }
 
         setLoading(true);
-        fetch('http://localhost:3002/api/queue/generate-batch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ types: selectedBatchTypes })
-        })
-            .then(res => res.json())
+        api.post<QueueItem[]>('/api/queue/generate-batch', { types: selectedBatchTypes })
             .then(data => {
                 setLoading(false);
                 if (Array.isArray(data)) {
@@ -171,13 +160,13 @@ const QueueHistory: React.FC = () => {
                     setShowPreview(true);
                 } else {
                     console.error("API returned non-array:", data);
-                    const errorMessage = (data && data.error) ? data.error : 'Resposta inválida da API';
+                    const errorMessage = (data as any).error ? (data as any).error : 'Resposta inválida da API';
                     alert('Erro ao gerar lote: ' + errorMessage);
                 }
             })
             .catch(err => {
                 setLoading(false);
-                alert('Erro ao gerar lote: ' + err);
+                alert('Erro ao gerar lote: ' + err.message);
             });
     };
 
@@ -212,15 +201,10 @@ const QueueHistory: React.FC = () => {
 
         setLoading(true);
 
-        fetch('http://localhost:3002/api/queue/items/bulk', {
-            method: 'DELETE',
+        api.delete<{ deleted: number }>('/api/queue/items/bulk', {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ids: Array.from(selectedItems) })
         })
-            .then(res => {
-                if (!res.ok) throw new Error('Falha na requisição');
-                return res.json();
-            })
             .then(data => {
                 setLoading(false);
                 setSelectedItems(new Set());
@@ -230,7 +214,7 @@ const QueueHistory: React.FC = () => {
             })
             .catch(err => {
                 setLoading(false);
-                alert('Erro ao excluir itens: ' + err);
+                alert('Erro ao excluir itens: ' + err.message);
             });
     };
 
@@ -248,20 +232,12 @@ const QueueHistory: React.FC = () => {
 
         Promise.all(
             Array.from(selectedItems).map(id =>
-                fetch(`http://localhost:3002/api/queue/items/${id}/select`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ selected: true })
-                })
+                api.put(`/api/queue/items/${id}/select`, { selected: true })
             )
         )
             .then(() => {
-                return fetch('http://localhost:3002/api/queue/send-selected', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
+                return api.post<{ sent: number, errors: number }>('/api/queue/send-selected', {});
             })
-            .then(res => res.json())
             .then(result => {
                 setSending(false);
                 setSelectedItems(new Set());
@@ -271,7 +247,7 @@ const QueueHistory: React.FC = () => {
             })
             .catch(err => {
                 setSending(false);
-                alert('Erro ao enviar: ' + err);
+                alert('Erro ao enviar: ' + err.message);
             });
     };
 
@@ -302,24 +278,19 @@ const QueueHistory: React.FC = () => {
             return;
         }
 
-        fetch('http://localhost:3002/api/blocked/by-installment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                client_code: item.code,
-                installment_id: item.id,
-                client_name: item.clientName,
-                reason: blockReason
-            })
+        api.post('/api/blocked/by-installment', {
+            client_code: item.code,
+            installment_id: item.id,
+            client_name: item.clientName,
+            reason: blockReason
         })
-            .then(res => res.json())
             .then(() => {
                 setBlockingItem(null);
                 setBlockReason('');
                 fetchData();
                 alert('Parcela bloqueada com sucesso!');
             })
-            .catch(err => alert('Erro ao bloquear: ' + err));
+            .catch(err => alert('Erro ao bloquear: ' + err.message));
     };
 
     const handleBlockClient = (item: QueueItem) => {
@@ -328,32 +299,25 @@ const QueueHistory: React.FC = () => {
             return;
         }
 
-        fetch('http://localhost:3002/api/blocked/by-client', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                client_code: item.code,
-                client_name: item.clientName,
-                reason: blockReason
-            })
+        api.post('/api/blocked/by-client', {
+            client_code: item.code,
+            client_name: item.clientName,
+            reason: blockReason
         })
-            .then(res => res.json())
             .then(() => {
                 setBlockingItem(null);
                 setBlockReason('');
                 fetchData();
                 alert('Cliente bloqueado com sucesso - todas as mensagens!');
             })
-            .catch(err => alert('Erro ao bloquear: ' + err));
+            .catch(err => alert('Erro ao bloquear: ' + err.message));
     };
 
     const handleUnblock = (id: number) => {
         if (confirm('Desbloquear este item?')) {
-            fetch(`http://localhost:3002/api/blocked/${id}`, {
-                method: 'DELETE'
-            })
+            api.delete(`/api/blocked/${id}`)
                 .then(() => fetchData())
-                .catch(err => alert('Erro ao desbloquear: ' + err));
+                .catch(err => alert('Erro ao desbloquear: ' + err.message));
         }
     };
 
@@ -366,26 +330,17 @@ const QueueHistory: React.FC = () => {
 
         setLoadingDatePreview(true);
         try {
-            const res = await fetch('http://localhost:3002/api/queue/generate-by-date', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    startDate: dateRangeStart,
-                    endDate: dateRangeEnd
-                })
+            const data = await api.post<QueueItem[]>('/api/queue/generate-by-date', {
+                startDate: dateRangeStart,
+                endDate: dateRangeEnd
             });
 
-            if (!res.ok) {
-                throw new Error('Erro ao gerar preview');
-            }
-
-            const data = await res.json();
             setDatePreviewItems(data);
             setShowDateRangeModal(false);
             setShowDatePreview(true);
             setSelectedDateItems(new Set());
-        } catch (err) {
-            alert('Erro ao gerar preview: ' + err);
+        } catch (err: any) {
+            alert('Erro ao gerar preview: ' + err.message);
         } finally {
             setLoadingDatePreview(false);
         }
@@ -440,24 +395,15 @@ const QueueHistory: React.FC = () => {
         }, 60000);
 
         try {
-            const res = await fetch('http://localhost:3002/api/queue/add-items', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    items: itemsToAdd,
-                    send_mode: 'MANUAL'
-                })
+            const result = await api.post<{ inserted: number, skipped: number }>('/api/queue/add-items', {
+                items: itemsToAdd,
+                send_mode: 'MANUAL'
             });
 
             // Limpar timeout e countdown se completou antes de 60s
             clearTimeout(timeoutId);
             clearInterval(countdownInterval);
 
-            if (!res.ok) {
-                throw new Error('Erro ao adicionar itens');
-            }
-
-            const result = await res.json();
             alert(`${result.inserted} itens adicionados à fila\n${result.skipped} itens ignorados (duplicados)`);
             setShowDatePreview(false);
             setDatePreviewItems([]);
@@ -465,10 +411,10 @@ const QueueHistory: React.FC = () => {
             setDateRangeStart('');
             setDateRangeEnd('');
             fetchData();
-        } catch (err) {
+        } catch (err: any) {
             clearTimeout(timeoutId);
             clearInterval(countdownInterval);
-            alert('Erro ao adicionar itens: ' + err);
+            alert('Erro ao adicionar itens: ' + err.message);
         } finally {
             setLoadingConfirm(false);
             setConfirmTimeout(0);
@@ -795,7 +741,7 @@ const QueueHistory: React.FC = () => {
                                         </th>
                                         <th className="px-4 py-3">Código</th>
                                         <th className="px-4 py-3">Cliente</th>
-                                        <th className="px-4 py-3">Emissão</th>
+                                        <th className="px-4 py-3">TELEFONE</th>
                                         <th className="px-4 py-3">Vencimento</th>
                                         <th className="px-4 py-3 text-right">Valor</th>
                                         <th className="px-4 py-3">Status</th>
@@ -828,7 +774,7 @@ const QueueHistory: React.FC = () => {
                                                 </div>
                                             </td>
                                             <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                                                {parseBrazilianDate(item.emissionDate || item.createdAt)}
+                                                {item.phone || '-'}
                                             </td>
                                             <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                                                 {parseBrazilianDate(item.dueDate)}

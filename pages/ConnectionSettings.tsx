@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../services/api';
 
 const ConnectionSettings: React.FC = () => {
   const [isTestingSQL, setIsTestingSQL] = useState(false);
@@ -25,8 +26,7 @@ const ConnectionSettings: React.FC = () => {
 
   useEffect(() => {
     // Fetch saved connection
-    fetch('/api/connection')
-      .then(res => res.json())
+    api.get<any>('/api/connection')
       .then(data => {
         if (data.host) {
           setSqlHost(data.host);
@@ -38,8 +38,7 @@ const ConnectionSettings: React.FC = () => {
       .catch(err => console.error("Error fetching connection:", err));
 
     // Fetch saved queries
-    fetch('/api/query/saved')
-      .then(res => res.json())
+    api.get<any[]>('/api/query/saved')
       .then(data => {
         console.log('Saved queries fetched:', data);
         setSavedQueries(data || []);
@@ -52,8 +51,7 @@ const ConnectionSettings: React.FC = () => {
       .catch(err => console.error("Error fetching saved queries:", err));
 
     // Fetch W-API configuration
-    fetch('/api/wapi/config')
-      .then(res => res.json())
+    api.get<any>('/api/wapi/config')
       .then(data => {
         if (data.instance_id) {
           setWapiInstanceId(data.instance_id);
@@ -65,24 +63,19 @@ const ConnectionSettings: React.FC = () => {
 
   const saveConnection = () => {
     setIsTestingSQL(true);
-    fetch('http://localhost:3002/api/connection', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        host: sqlHost,
-        database: sqlDb,
-        user: sqlUser,
-        password: sqlPass
-      })
+    api.post('/api/connection', {
+      host: sqlHost,
+      database: sqlDb,
+      user: sqlUser,
+      password: sqlPass
     })
-      .then(res => res.json())
       .then(() => {
         setIsTestingSQL(false);
         alert('Configurações salvas! (Teste real de conexão será feito ao executar query)');
       })
       .catch(err => {
         setIsTestingSQL(false);
-        alert('Erro ao salvar: ' + err);
+        alert('Erro ao salvar: ' + err.message);
       });
   };
 
@@ -92,23 +85,10 @@ const ConnectionSettings: React.FC = () => {
     setQueryError(null);
 
     // Save query first (optional, but requested)
-    fetch('/api/query/save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query_text: queryText })
-    });
+    api.post('/api/query/save', { query_text: queryText }).catch(() => { });
 
     // Execute
-    fetch('/api/query/execute', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: queryText })
-    })
-      .then(async res => {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Erro desconhecido');
-        return data;
-      })
+    api.post<any[]>('/api/query/execute', { query: queryText })
       .then(data => {
         setQueryResults(data);
         setIsExecutingQuery(false);
@@ -188,17 +168,12 @@ const ConnectionSettings: React.FC = () => {
             <button
               onClick={() => {
                 setIsTestingSQL(true);
-                fetch('http://localhost:3002/api/connection/test', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    host: sqlHost,
-                    database: sqlDb,
-                    user: sqlUser,
-                    password: sqlPass
-                  })
+                api.post<any>('/api/connection/test', {
+                  host: sqlHost,
+                  database: sqlDb,
+                  user: sqlUser,
+                  password: sqlPass
                 })
-                  .then(res => res.json())
                   .then(data => {
                     setIsTestingSQL(false);
                     if (data.error) {
@@ -209,7 +184,7 @@ const ConnectionSettings: React.FC = () => {
                   })
                   .catch(err => {
                     setIsTestingSQL(false);
-                    alert('Erro ao testar: ' + err);
+                    alert('Erro ao testar: ' + err.message);
                   });
               }}
               disabled={isTestingSQL}
@@ -280,22 +255,17 @@ const ConnectionSettings: React.FC = () => {
             <button
               onClick={() => {
                 setIsTestingWA(true);
-                fetch('http://localhost:3001/api/wapi/config', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    instance_id: wapiInstanceId,
-                    bearer_token: wapiToken
-                  })
+                api.post('/api/wapi/config', {
+                  instance_id: wapiInstanceId,
+                  bearer_token: wapiToken
                 })
-                  .then(res => res.json())
                   .then(() => {
                     setIsTestingWA(false);
                     alert('Configuração W-API salva com sucesso!');
                   })
                   .catch(err => {
                     setIsTestingWA(false);
-                    alert('Erro ao salvar: ' + err);
+                    alert('Erro ao salvar: ' + err.message);
                   });
               }}
               disabled={isTestingWA || !wapiInstanceId || !wapiToken}
@@ -306,15 +276,10 @@ const ConnectionSettings: React.FC = () => {
             <button
               onClick={() => {
                 setIsTestingWA(true);
-                fetch('http://localhost:3001/api/wapi/test', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    instance_id: wapiInstanceId,
-                    bearer_token: wapiToken
-                  })
+                api.post<any>('/api/wapi/test', {
+                  instance_id: wapiInstanceId,
+                  bearer_token: wapiToken
                 })
-                  .then(res => res.json())
                   .then(data => {
                     setIsTestingWA(false);
                     if (data.success) {
@@ -325,7 +290,7 @@ const ConnectionSettings: React.FC = () => {
                   })
                   .catch(err => {
                     setIsTestingWA(false);
-                    alert('Erro ao testar: ' + err);
+                    alert('Erro ao testar: ' + err.message);
                   });
               }}
               disabled={isTestingWA || !wapiInstanceId || !wapiToken}
@@ -341,17 +306,12 @@ const ConnectionSettings: React.FC = () => {
                 return;
               }
               setIsTestingWA(true);
-              fetch('http://localhost:3001/api/wapi/send-test', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  instance_id: wapiInstanceId,
-                  bearer_token: wapiToken,
-                  phone: wapiTestPhone,
-                  message: 'Mensagem de teste do Gerenciador - W-API configurado com sucesso! 🎉'
-                })
+              api.post<any>('/api/wapi/send-test', {
+                instance_id: wapiInstanceId,
+                bearer_token: wapiToken,
+                phone: wapiTestPhone,
+                message: 'Mensagem de teste do Gerenciador - W-API configurado com sucesso! 🎉'
               })
-                .then(res => res.json())
                 .then(data => {
                   setIsTestingWA(false);
                   if (data.success) {
@@ -362,7 +322,7 @@ const ConnectionSettings: React.FC = () => {
                 })
                 .catch(err => {
                   setIsTestingWA(false);
-                  alert('Erro ao enviar: ' + err);
+                  alert('Erro ao enviar: ' + err.message);
                 });
             }}
             disabled={isTestingWA || !wapiInstanceId || !wapiToken || !wapiTestPhone}
@@ -394,21 +354,15 @@ const ConnectionSettings: React.FC = () => {
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => {
-                  fetch('/api/query/save', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query_text: queryText })
-                  })
-                    .then(res => res.json())
+                  api.post('/api/query/save', { query_text: queryText })
                     .then(() => {
                       alert('Query salva com sucesso!');
                       // Refresh saved queries list
-                      fetch('/api/query/saved')
-                        .then(res => res.json())
+                      api.get<any[]>('/api/query/saved')
                         .then(data => setSavedQueries(data || []));
                     })
                     .catch(err => {
-                      alert('Erro ao salvar query: ' + err);
+                      alert('Erro ao salvar query: ' + err.message);
                     });
                 }}
                 className="bg-gray-100 text-gray-700 py-2 px-4 rounded hover:bg-gray-200 transition-colors border border-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600 flex items-center gap-2"
@@ -451,16 +405,13 @@ const ConnectionSettings: React.FC = () => {
                         onClick={(e) => {
                           e.stopPropagation();
                           if (confirm('Excluir esta query?')) {
-                            fetch(`/api/query/saved/${sq.id}`, {
-                              method: 'DELETE'
-                            })
+                            api.delete(`/api/query/saved/${sq.id}`)
                               .then(() => {
-                                fetch('/api/query/saved')
-                                  .then(res => res.json())
+                                api.get<any[]>('/api/query/saved')
                                   .then(data => setSavedQueries(data || []))
                                   .catch(err => console.error(err));
                               })
-                              .catch(err => alert('Erro ao excluir: ' + err));
+                              .catch(err => alert('Erro ao excluir: ' + err.message));
                           }
                         }}
                         className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700"

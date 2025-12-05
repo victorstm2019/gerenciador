@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { api } from '../services/api';
 
 interface ErrorLog {
   id: number;
@@ -44,8 +45,7 @@ const ErrorLogs: React.FC = () => {
 
   const fetchLogs = () => {
     setLoading(true);
-    fetch('http://localhost:3002/api/logs')
-      .then(res => res.json())
+    api.get<ErrorLog[]>('/api/logs')
       .then(data => {
         setLogs(data || []);
         setLoading(false);
@@ -58,8 +58,7 @@ const ErrorLogs: React.FC = () => {
 
   const fetchDuplicateLogs = () => {
     setLoadingDuplicates(true);
-    fetch('http://localhost:3002/api/logs/duplicates')
-      .then(res => res.json())
+    api.get<DuplicateLog[]>('/api/logs/duplicates')
       .then(data => {
         setDuplicateLogs(data || []);
         setLoadingDuplicates(false);
@@ -73,18 +72,16 @@ const ErrorLogs: React.FC = () => {
   const deleteDuplicateLogs = (ids: number[], all: boolean = false) => {
     if (!confirm('Tem certeza que deseja excluir os logs selecionados?')) return;
 
-    fetch('http://localhost:3002/api/logs/duplicates', {
-      method: 'DELETE',
+    api.delete('/api/logs/duplicates', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids, all })
     })
-      .then(res => res.json())
       .then(() => {
         fetchDuplicateLogs();
         setSelectedDuplicates([]);
         alert('Logs excluídos com sucesso!');
       })
-      .catch(err => alert('Erro ao excluir logs: ' + err));
+      .catch(err => alert('Erro ao excluir logs: ' + err.message));
   };
 
   const toggleSelectDuplicate = (id: number) => {
@@ -118,18 +115,16 @@ const ErrorLogs: React.FC = () => {
   const deleteSystemLogs = (ids: number[], all: boolean = false) => {
     if (!confirm('Tem certeza que deseja excluir os logs selecionados?')) return;
 
-    fetch('http://localhost:3002/api/logs', {
-      method: 'DELETE',
+    api.delete('/api/logs', {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids, all })
     })
-      .then(res => res.json())
       .then(() => {
         fetchLogs();
         setSelectedLogs([]);
         alert('Logs excluídos com sucesso!');
       })
-      .catch(err => alert('Erro ao excluir logs: ' + err));
+      .catch(err => alert('Erro ao excluir logs: ' + err.message));
   };
 
   const filteredLogs = logs.filter(log => {
