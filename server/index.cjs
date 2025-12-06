@@ -6,10 +6,19 @@ const sql = require('mssql');
 const crypto = require('crypto');
 
 const app = express();
-const PORT = 3002;
+const PORT = 3001;
 
 // Session storage (in-memory)
 const activeSessions = new Map(); // Map<token, { userId, username, createdAt }>
+
+// Create SYSTEM identity for internal scheduler tasks
+const SYSTEM_TOKEN = "SYSTEM-INTERNAL-TOKEN-" + crypto.randomUUID();
+activeSessions.set(SYSTEM_TOKEN, {
+    userId: 0,
+    username: 'SYSTEM',
+    role: 'system',
+    createdAt: new Date()
+});
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' })); // Aumentado de 100kb (padrão) para 50mb
@@ -92,40 +101,55 @@ app.post('/api/auth/login', (req, res) => {
         return res.status(400).json({ error: 'Usuário e senha são obrigatórios' });
     }
 
-    db.get("SELECT * FROM users WHERE username = ? AND password = ?", [username, password], (err, user) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
+    db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
+
+        // In a real app, use hashed passwords (bcrypt). Here it seems plaintext based on logs.
+        if (user.password !== password) {
+            return res.status(401).json({ error: 'Senha incorreta' });
         }
 
-        if (!user) {
-            return res.status(401).json({ error: 'Usuário ou senha incorretos' });
-        }
-
-        if (user.blocked === 1) {
-            return res.status(403).json({ error: 'Usuário bloqueado' });
-        }
-
-        // Generate session token
+        // Generate token
         const token = crypto.randomUUID();
-
-        // Store session
         activeSessions.set(token, {
             userId: user.id,
             username: user.username,
+            role: user.role,
             createdAt: new Date()
         });
 
-        // Return user data with token
+        // Return user info + token
+        // Permissions is JSON string in DB
+        let permissions = [];
+        try {
+            permissions = JSON.parse(user.permissions || '[]');
+        } catch (e) {
+            console.error('Error parsing permissions', e);
+        }
+
         res.json({
             id: user.id,
             username: user.username,
             role: user.role,
-            permissions: JSON.parse(user.permissions || '[]'),
+            permissions: permissions,
             first_login: user.first_login,
             token: token
         });
     });
 });
+
+// List users for login dropdown
+app.get('/api/users/list', (req, res) => {
+    db.all("SELECT id, username, role FROM users WHERE blocked = 0", (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows || []);
+    });
+});
+
 
 // Reset password endpoint
 app.post('/api/auth/reset-password', authMiddleware, (req, res) => {
@@ -693,7 +717,7 @@ app.post('/api/wapi/send-test', authMiddleware, async (req, res) => {
 
 // Generate test messages from database
 app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
-    const { messageType, limit = 10 } = req.body; // 'reminder' or 'overdue'
+    const { messageType, limit } = req.body; // 'reminder' or 'overdue'
 
     try {
         // Get message configuration
@@ -808,13 +832,13 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                     WITH BaseData AS (
                         ${cleanBaseQuery}
                     )
-                    SELECT TOP ${limit} *
+                    SELECT *
                     FROM BaseData
                     WHERE CONVERT(DATE, vencimento, 103) >= '${today.toISOString().split('T')[0]}'
                     AND CONVERT(DATE, vencimento, 103) <= '${targetDate.toISOString().split('T')[0]}'
                     ORDER BY CONVERT(DATE, vencimento, 103)
                 `;
-            } else {
+            } else { // overdue
                 const daysBack = config.overdue_days || 3;
                 const targetDate = new Date(today);
                 targetDate.setDate(today.getDate() - daysBack);
@@ -823,7 +847,7 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                     WITH BaseData AS (
                         ${cleanBaseQuery}
                     )
-                    SELECT TOP ${limit} *
+                    SELECT *
                     FROM BaseData
                     WHERE CONVERT(DATE, vencimento, 103) < '${today.toISOString().split('T')[0]}'
                     AND CONVERT(DATE, vencimento, 103) >= '${targetDate.toISOString().split('T')[0]}'
@@ -2327,7 +2351,13 @@ async function sendMessageViaWAPI(phone, message) {
     const url = `https://w-api.izy.one/message/sendText/${wapiConfig.instance_id}`;
 
     // Clean phone number (remove non-digits)
-    const cleanPhone = phone.replace(/\D/g, '');
+    // Clean phone number (remove non-digits)
+    let cleanPhone = phone.replace(/\D/g, '');
+
+    // Ensure it has country code 55
+    if (!cleanPhone.startsWith('55')) {
+        cleanPhone = '55' + cleanPhone;
+    }
 
     const response = await fetch(url, {
         method: 'POST',
@@ -2554,8 +2584,7 @@ app.get('/api/logs', (req, res) => {
 });
 
 // --- Scheduler for Automatic Generation ---
-const SCHEDULER_INTERVAL = 60 * 60 * 1000; // Check every hour
-// const SCHEDULER_INTERVAL = 60 * 1000; // DEBUG: Check every minute
+const SCHEDULER_INTERVAL = 60 * 1000; // Check every minute
 
 // Helper function to get config
 function getConfig() {
@@ -2619,45 +2648,67 @@ setInterval(async () => {
         logScheduler("Iniciando geração automática de mensagens", `Horário: ${currentTime}`);
 
         // Only run if there are active configurations for auto-generation
-        // For now, we'll assume we want to generate daily reminders/overdue
-        // Ideally, this should be configurable in the database
+        try {
+            const remindersResponse = await fetch(`http://localhost:${PORT}/api/queue/generate-test`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${SYSTEM_TOKEN}`
+                },
+                body: JSON.stringify({ messageType: 'reminder' })
+            });
 
-        // 1. Generate Reminders
-        const remindersResponse = await fetch('http://localhost:3002/api/queue/generate-test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messageType: 'reminder', limit: 50 }) // Reasonable limit per run
-        });
-
-        if (remindersResponse.ok) {
-            const reminders = await remindersResponse.json();
-            if (reminders.length > 0) {
-                await fetch('http://localhost:3002/api/queue/add-items', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items: reminders, send_mode: 'AUTO' })
-                });
-                logScheduler(`Lembretes adicionados à fila`, `${reminders.length} itens`);
+            if (remindersResponse.ok) {
+                const reminders = await remindersResponse.json();
+                logScheduler(`Busca de Lembretes realizada`, `Encontrados: ${reminders.length}`);
+                if (reminders.length > 0) {
+                    await fetch(`http://localhost:${PORT}/api/queue/add-items`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${SYSTEM_TOKEN}`
+                        },
+                        body: JSON.stringify({ items: reminders, send_mode: 'AUTO' })
+                    });
+                    logScheduler(`Lembretes adicionados à fila`, `${reminders.length} itens`);
+                }
+            } else {
+                logScheduler(`Erro ao buscar lembretes`, `Status: ${remindersResponse.status}`);
             }
+        } catch (e) {
+            logScheduler(`Erro na requisição de lembretes`, e.message);
         }
 
         // 2. Generate Overdue
-        const overdueResponse = await fetch('http://localhost:3002/api/queue/generate-test', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messageType: 'overdue', limit: 50 })
-        });
+        try {
+            const overdueResponse = await fetch(`http://localhost:${PORT}/api/queue/generate-test`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${SYSTEM_TOKEN}`
+                },
+                body: JSON.stringify({ messageType: 'overdue' })
+            });
 
-        if (overdueResponse.ok) {
-            const overdue = await overdueResponse.json();
-            if (overdue.length > 0) {
-                await fetch('http://localhost:3002/api/queue/add-items', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items: overdue, send_mode: 'AUTO' })
-                });
-                logScheduler(`Mensagens de vencimento adicionadas à fila`, `${overdue.length} itens`);
+            if (overdueResponse.ok) {
+                const overdue = await overdueResponse.json();
+                logScheduler(`Busca de Vencimentos realizada`, `Encontrados: ${overdue.length}`);
+                if (overdue.length > 0) {
+                    await fetch(`http://localhost:${PORT}/api/queue/add-items`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${SYSTEM_TOKEN}`
+                        },
+                        body: JSON.stringify({ items: overdue, send_mode: 'AUTO' })
+                    });
+                    logScheduler(`Mensagens de vencimento adicionadas à fila`, `${overdue.length} itens`);
+                }
+            } else {
+                logScheduler(`Erro ao buscar vencimentos`, `Status: ${overdueResponse.status}`);
             }
+        } catch (e) {
+            logScheduler(`Erro na requisição de vencimentos`, e.message);
         }
 
         // 6. Mark as executed
