@@ -194,7 +194,10 @@ app.post('/api/config', authMiddleware, (req, res) => {
         overdue_days,
         overdue_msg,
         overdue_repeat_times,
-        overdue_repeat_interval_days
+        overdue_repeat_interval_days,
+        interest_rate,
+        penalty_rate,
+        base_value_type
     } = req.body;
 
     // We assume there's always one row with ID 1 (created in db.js)
@@ -210,7 +213,10 @@ app.post('/api/config', authMiddleware, (req, res) => {
     overdue_days = ?, 
     overdue_msg = ?,
     overdue_repeat_times = ?,
-    overdue_repeat_interval_days = ?
+    overdue_repeat_interval_days = ?,
+    interest_rate = ?,
+    penalty_rate = ?,
+    base_value_type = ?
     WHERE id = 1`;
 
     db.run(sqlQuery, [
@@ -225,7 +231,10 @@ app.post('/api/config', authMiddleware, (req, res) => {
         overdue_days,
         overdue_msg,
         overdue_repeat_times,
-        overdue_repeat_interval_days
+        overdue_repeat_interval_days,
+        interest_rate,
+        penalty_rate,
+        base_value_type
     ], function (err) {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -870,9 +879,81 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                         const date = new Date(value);
                         value = date.toLocaleDateString('pt-BR');
                     }
-
                     message = message.replace(new RegExp(variable, 'g'), value);
                 });
+
+                // Calculate and replace {valorparcelavencida}, {juros}, {multa}
+                if (message.includes('{valorparcelavencida}') || message.includes('{juros}') || message.includes('{multa}')) {
+                    const interestRate = config.interest_rate || 0;
+                    const penaltyRate = config.penalty_rate || 0;
+                    const baseType = config.base_value_type || 'valorbrutoparcela';
+
+                    let baseValue = 0;
+                    // Determine base value key and get value
+                    const baseColumn = Object.keys(fieldMap).find(key => key.includes(baseType)) ? fieldMap[Object.keys(fieldMap).find(key => key.includes(baseType))] : baseType;
+
+                    if (getValue(client, baseType)) baseValue = getValue(client, baseType);
+                    else if (getValue(client, baseColumn)) baseValue = getValue(client, baseColumn);
+                    else {
+                        if (baseType.includes('bruto')) baseValue = client.valorbrutoparcela || 0;
+                        else if (baseType.includes('final')) baseValue = client.valorfinalparcela || 0;
+                    }
+
+                    baseValue = parseFloat(baseValue) || 0;
+
+                    // Calculate Days Overdue
+                    let daysOverdue = 0;
+                    const vencimentoStr = getValue(client, 'vencimento') || client.vencimento;
+                    let dueDateObj = null;
+
+                    if (vencimentoStr) {
+                        if (vencimentoStr instanceof Date) {
+                            dueDateObj = vencimentoStr;
+                        } else if (typeof vencimentoStr === 'string') {
+                            if (vencimentoStr.includes('/')) {
+                                const parts = vencimentoStr.split('/'); // DD/MM/YYYY
+                                if (parts.length === 3) {
+                                    dueDateObj = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                                }
+                            } else if (vencimentoStr.includes('-')) {
+                                dueDateObj = new Date(vencimentoStr);
+                            }
+                        }
+                    }
+
+                    if (dueDateObj) {
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        dueDateObj.setHours(0, 0, 0, 0);
+                        const diffTime = today.getTime() - dueDateObj.getTime();
+                        daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    }
+
+                    let interestAmount = 0;
+                    let penaltyAmount = 0;
+
+                    if (daysOverdue > 0) {
+                        // Monthly Rate / 30 * Days
+                        interestAmount = baseValue * ((interestRate / 100) / 30) * daysOverdue;
+                        penaltyAmount = baseValue * (penaltyRate / 100);
+                    }
+
+                    const totalAmount = baseValue + interestAmount + penaltyAmount;
+
+                    const formattedTotal = totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    const formattedInterest = interestAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    const formattedPenalty = penaltyAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+                    if (message.includes('{valorparcelavencida}')) {
+                        message = message.replace(/{valorparcelavencida}/g, formattedTotal);
+                    }
+                    if (message.includes('{juros}')) {
+                        message = message.replace(/{juros}/g, formattedInterest);
+                    }
+                    if (message.includes('{multa}')) {
+                        message = message.replace(/{multa}/g, formattedPenalty);
+                    }
+                }
 
                 // Criar ID único combinando sequência de venda, número da parcela e código do cliente
                 const uniqueId = `${getValue(client, 'sequenciavenda') || '0'}-${getValue(client, 'numeroparcela') || '0'}-${client.codigocliente}`;
@@ -1096,6 +1177,44 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
                             }
                             message = message.replace(new RegExp(variable, 'g'), value);
                         });
+
+                        // Calculate and replace {valorparcelavencida}, {juros}, {multa}
+                        const interestRate = config.interest_rate || 0;
+                        const penaltyRate = config.penalty_rate || 0;
+                        const baseType = config.base_value_type || 'valorbrutoparcela';
+
+                        let baseValue = 0;
+                        // Determine base value key and get value
+                        const baseColumn = Object.keys(fieldMap).find(key => key.includes(baseType)) ? fieldMap[Object.keys(fieldMap).find(key => key.includes(baseType))] : baseType;
+
+                        if (getValue(client, baseType)) baseValue = getValue(client, baseType);
+                        else if (getValue(client, baseColumn)) baseValue = getValue(client, baseColumn);
+                        else {
+                            if (baseType.includes('bruto')) baseValue = getValue(client, 'valorbrutoparcela') || 0;
+                            else if (baseType.includes('final')) baseValue = getValue(client, 'valorfinalparcela') || 0;
+                        }
+
+                        baseValue = parseFloat(baseValue) || 0;
+
+                        const interestAmount = baseValue * (interestRate / 100);
+                        const penaltyAmount = baseValue * (penaltyRate / 100);
+                        const totalAmount = baseValue + interestAmount + penaltyAmount;
+
+                        const formattedTotal = totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        const formattedInterest = interestAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        const formattedPenalty = penaltyAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+                        if (message.includes('{valorparcelavencida}')) {
+                            message = message.replace(/{valorparcelavencida}/g, formattedTotal);
+                        }
+                        if (message.includes('{juros}')) {
+                            message = message.replace(/{juros}/g, formattedInterest);
+                        }
+                        if (message.includes('{multa}')) {
+                            message = message.replace(/{multa}/g, formattedPenalty);
+                        }
+
+
 
                         const desc = getValue(client, 'descricaoparcela') || '';
 

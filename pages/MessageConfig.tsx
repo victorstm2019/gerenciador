@@ -20,6 +20,12 @@ const MessageConfig: React.FC = () => {
   const [reminderRepeatInterval, setReminderRepeatInterval] = useState(3);
   const [overdueRepeatTimes, setOverdueRepeatTimes] = useState(0);
   const [overdueRepeatInterval, setOverdueRepeatInterval] = useState(7);
+
+  // New Calculation Fields
+  const [interestRate, setInterestRate] = useState(0);
+  const [penaltyRate, setPenaltyRate] = useState(0);
+  const [baseValueType, setBaseValueType] = useState('valorbrutoparcela');
+
   const [isLoading, setIsLoading] = useState(false);
 
   // Field Mappings State
@@ -29,7 +35,7 @@ const MessageConfig: React.FC = () => {
   const availableColumns = [
     'codigocliente', 'numeroparcela', 'sequenciavenda', 'nomecliente', 'cpfcliente', 'fone1', 'fone2',
     'descricaoparcela', 'emissao', 'vencimento', 'valorbrutoparcela',
-    'desconto', 'juros', 'multa', 'valorfinalparcela', 'valortotaldevido', 'totalvencido'
+    'valorfinalparcela', 'valortotaldevido', 'totalvencido'
   ];
 
   useEffect(() => {
@@ -52,9 +58,16 @@ const MessageConfig: React.FC = () => {
           setReminderRepeatInterval(configData.reminder_repeat_interval_days ?? 3);
           setOverdueRepeatTimes(configData.overdue_repeat_times ?? 0);
           setOverdueRepeatInterval(configData.overdue_repeat_interval_days ?? 7);
+
+          setInterestRate(configData.interest_rate ?? 0);
+          setPenaltyRate(configData.penalty_rate ?? 0);
+          setBaseValueType(configData.base_value_type || 'valorbrutoparcela');
         }
         if (mappingsData) {
-          setFieldMappings(mappingsData);
+          const filteredMappings = mappingsData.filter(m =>
+            !['@desconto', '@juros', '@multa', 'desconto', 'juros', 'multa'].includes(m.message_variable.toLowerCase())
+          );
+          setFieldMappings(filteredMappings);
         }
         setIsLoading(false);
       })
@@ -78,7 +91,10 @@ const MessageConfig: React.FC = () => {
       overdue_enabled: enableOverdue,
       overdue_days: daysAfter,
       overdue_repeat_times: overdueRepeatTimes,
-      overdue_repeat_interval_days: overdueRepeatInterval
+      overdue_repeat_interval_days: overdueRepeatInterval,
+      interest_rate: interestRate,
+      penalty_rate: penaltyRate,
+      base_value_type: baseValueType
     })
       .then(() => {
         setIsLoading(false);
@@ -166,6 +182,62 @@ const MessageConfig: React.FC = () => {
             </p>
           </div>
         )}
+      </div>
+
+      {/* Calculation Config */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4">Cálculo de Valores</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Juros (%)
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              value={interestRate}
+              onChange={(e) => setInterestRate(parseFloat(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Multa (%)
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              value={penaltyRate}
+              onChange={(e) => setPenaltyRate(parseFloat(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Valor Base
+            </label>
+            <select
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              value={baseValueType}
+              onChange={(e) => setBaseValueType(e.target.value)}
+            >
+              <option value="valorbrutoparcela">Valor Bruto</option>
+              <option value="valorfinalparcela">Valor Final</option>
+            </select>
+            <p className="text-xs text-gray-500 mt-1">Base para cálculo de juros e multa</p>
+          </div>
+        </div>
+        <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-3">
+          <p className="text-xs text-blue-800 dark:text-blue-300">
+            Variáveis calculadas disponíveis para uso na mensagem: <br />
+            <strong>{`{valorparcelavencida}`}</strong>: Total corrigido (Base + Juros + Multa) <br />
+            <strong>{`{juros}`}</strong>: Valor calculado dos juros <br />
+            <strong>{`{multa}`}</strong>: Valor calculado da multa <br />
+            <span className="opacity-75 mt-1 block">Cálculo: <em>Valor Base + (Valor Base * Juros%) + (Valor Base * Multa%)</em></span>
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
