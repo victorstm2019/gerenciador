@@ -55,40 +55,31 @@ const formatBrazilianPhone = (phone) => {
     }
 
     // Remove all non-numeric characters
-    const cleaned = phoneStr.replace(/\D/g, '');
+    let cleaned = phoneStr.replace(/\D/g, '');
 
-    // If already has country code (starts with 55 and has 12-13 digits)
+    // CHECK and REMOVE country code 55 if present
     if (cleaned.startsWith('55') && (cleaned.length === 12 || cleaned.length === 13)) {
+        cleaned = cleaned.substring(2);
+    }
+
+    // Now cleaned should be 10 or 11 digits (DDD + Number)
+
+    // If has 11 digits (DDD + 9 digits), return as is (without 55)
+    if (cleaned.length === 11) {
         return cleaned;
     }
 
-    // If has 11 digits (DDD + 9 digits), add country code
-    if (cleaned.length === 11) {
-        return '55' + cleaned;
-    }
-
-    // If has 10 digits (DDD + 8 digits - old format), add country code and 9
+    // If has 10 digits (DDD + 8 digits), add 9? User didn't explicitly ask to add 9, but previous logic did.
+    // Let's keep the logic of adding 9 if missing, but NO 55.
     if (cleaned.length === 10) {
         const ddd = cleaned.substring(0, 2);
         const number = cleaned.substring(2);
-        return '55' + ddd + '9' + number;
-    }
-
-    // If has 9 digits (without DDD), cannot format
-    if (cleaned.length === 9) {
-        console.warn(`Phone without DDD: ${phone}`);
-        return null;
-    }
-
-    // If has 8 digits (old format without DDD), cannot format
-    if (cleaned.length === 8) {
-        console.warn(`Phone without DDD (old): ${phone}`);
-        return null;
+        return ddd + '9' + number;
     }
 
     // Invalid format
-    console.warn(`Invalid phone: ${phone} (${cleaned.length} digits)`);
-    return null;
+    // console.warn(`Invalid phone: ${phone} (${cleaned.length} digits)`);
+    return cleaned; // Return whatever we have if it doesn't match standard
 };
 
 // --- Authentication API ---
