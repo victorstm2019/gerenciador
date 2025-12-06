@@ -944,14 +944,15 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                     const formattedInterest = interestAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                     const formattedPenalty = penaltyAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+                    // Explicitly replace with calculated values using string replacement
                     if (message.includes('{valorparcelavencida}')) {
-                        message = message.replace(/{valorparcelavencida}/g, formattedTotal);
+                        message = message.split('{valorparcelavencida}').join(formattedTotal);
                     }
                     if (message.includes('{juros}')) {
-                        message = message.replace(/{juros}/g, formattedInterest);
+                        message = message.split('{juros}').join(formattedInterest);
                     }
                     if (message.includes('{multa}')) {
-                        message = message.replace(/{multa}/g, formattedPenalty);
+                        message = message.split('{multa}').join(formattedPenalty);
                     }
                 }
 
@@ -1057,49 +1058,29 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
         try {
             pool = await sql.connect(sqlConfig);
             const today = new Date();
+            const { types, startDate, endDate } = req.body; // Extract custom dates
 
-            // Get saved query or use default
-            const savedQuery = await new Promise((resolve, reject) => {
-                db.get("SELECT query_text FROM saved_queries ORDER BY id DESC LIMIT 1", (err, row) => {
-                    if (err) resolve(null);
-                    else resolve(row ? row.query_text : null);
-                });
-            });
-
-            const baseQuery = savedQuery || `
-                SELECT
-                    FC.Cliente__Codigo AS codigocliente,
-                    FC.Parcela_Numero AS numeroparcela,
-                    C.Nome AS nomecliente,
-                    C.CNPJ AS cpfcliente,
-                    c.fone1 as fone1,
-                    c.fone2 as fone2,
-                    CONVERT(VARCHAR(10), FC.EMISSAO, 103) AS emissao,
-                    CONVERT(VARCHAR(10), FC.VENCIMENTO, 103) AS vencimento,
-                    FC.Valor AS valorbrutoparcela,
-                    FC.Desconto AS desconto,
-                    FC.Juros AS juros,
-                    FC.Multa AS multa,
-                    FC.Valor_Final AS valorfinalparcela,
-                    SUM(FC.Valor_Final) OVER (PARTITION BY FC.Cliente__Codigo) AS valortotaldevido,
-                    SUM(CASE WHEN FC.VENCIMENTO < CAST(GETDATE() AS DATE) THEN FC.Valor_Final ELSE 0 END) OVER (PARTITION BY FC.Cliente__Codigo) AS totalvencido,
-                    FC.Descricao AS descricaoparcela
-                FROM FINANCEIRO_CONTA FC
-                LEFT JOIN Cli_For C ON FC.Cliente__Codigo = C.Codigo
-                WHERE FC.PAGAR_RECEBER = 'R'
-                  AND FC.SITUACAO = 'A'
-                  AND FC.STATUS <> -1
-                  AND FC.Cliente__Codigo <> 1
-                  AND FC.Tipo = 'P'
-            `;
-
-            let cleanBaseQuery = baseQuery.trim();
-            cleanBaseQuery = cleanBaseQuery.replace(/;+\s*$/g, '');
-            cleanBaseQuery = cleanBaseQuery.replace(/ORDER\s+BY\s+[\w\.,\s]+$/i, '');
+            // Helper to format date for SQL
+            const formatDate = (date) => date.toISOString().split('T')[0];
 
             for (const type of types) {
                 let finalQuery;
-                if (type === 'reminder') {
+                if (startDate && endDate) {
+                    // Custom Range Query (applies to both, but usually used for Overdue by Date)
+                    finalQuery = `
+                        WITH BaseData AS (
+                            ${cleanBaseQuery}
+                        )
+                        SELECT 
+                            codigocliente, numeroparcela, sequenciavenda, nomecliente, cpfcliente, fone1, fone2,
+                            emissao, vencimento, valorbrutoparcela, desconto, juros, multa,
+                            valorfinalparcela, valortotaldevido, totalvencido, descricaoparcela
+                        FROM BaseData
+                        WHERE CONVERT(DATE, vencimento, 103) >= '${startDate}'
+                        AND CONVERT(DATE, vencimento, 103) <= '${endDate}'
+                        ORDER BY CONVERT(DATE, vencimento, 103)
+                    `;
+                } else if (type === 'reminder') {
                     const daysAhead = config.reminder_days || 5;
                     const targetDate = new Date(today);
                     targetDate.setDate(today.getDate() + daysAhead);
@@ -1113,8 +1094,8 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
                             emissao, vencimento, valorbrutoparcela, desconto, juros, multa,
                             valorfinalparcela, valortotaldevido, totalvencido, descricaoparcela
                         FROM BaseData
-                        WHERE CONVERT(DATE, vencimento, 103) >= '${today.toISOString().split('T')[0]}'
-                        AND CONVERT(DATE, vencimento, 103) <= '${targetDate.toISOString().split('T')[0]}'
+                        WHERE CONVERT(DATE, vencimento, 103) >= '${formatDate(today)}'
+                        AND CONVERT(DATE, vencimento, 103) <= '${formatDate(targetDate)}'
                         ORDER BY CONVERT(DATE, vencimento, 103)
                     `;
                 } else if (type === 'overdue') {
@@ -1131,8 +1112,8 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
                             emissao, vencimento, valorbrutoparcela, desconto, juros, multa,
                             valorfinalparcela, valortotaldevido, totalvencido, descricaoparcela
                         FROM BaseData
-                        WHERE CONVERT(DATE, vencimento, 103) < '${today.toISOString().split('T')[0]}'
-                        AND CONVERT(DATE, vencimento, 103) >= '${targetDate.toISOString().split('T')[0]}'
+                        WHERE CONVERT(DATE, vencimento, 103) < '${formatDate(today)}'
+                        AND CONVERT(DATE, vencimento, 103) >= '${formatDate(targetDate)}'
                         ORDER BY CONVERT(DATE, vencimento, 103) DESC
                     `;
                 }
@@ -1162,8 +1143,10 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
                         return undefined;
                     };
 
+                    const template = type === 'reminder' ? config.reminder_msg : config.overdue_msg;
+
                     const messages = clients.map((client, idx) => {
-                        let message = template;
+                        let message = template || '';
                         Object.keys(fieldMap).forEach(variable => {
                             const dbColumn = fieldMap[variable];
                             let value = getValue(client, dbColumn) || '';
@@ -1196,23 +1179,75 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
 
                         baseValue = parseFloat(baseValue) || 0;
 
-                        const interestAmount = baseValue * (interestRate / 100);
-                        const penaltyAmount = baseValue * (penaltyRate / 100);
+                        // Calculate Days Overdue
+                        let daysOverdue = 0;
+                        const vencimentoStr = getValue(client, 'vencimento') || client.vencimento;
+                        let dueDateObj = null;
+
+                        if (vencimentoStr) {
+                            if (vencimentoStr instanceof Date) {
+                                dueDateObj = vencimentoStr;
+                            } else if (typeof vencimentoStr === 'string') {
+                                if (vencimentoStr.includes('/')) {
+                                    const parts = vencimentoStr.split('/'); // DD/MM/YYYY
+                                    if (parts.length === 3) {
+                                        dueDateObj = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                                    }
+                                } else if (vencimentoStr.includes('-')) {
+                                    dueDateObj = new Date(vencimentoStr);
+                                }
+                            }
+                        }
+
+                        if (dueDateObj) {
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            dueDateObj.setHours(0, 0, 0, 0);
+                            const diffTime = today.getTime() - dueDateObj.getTime();
+                            daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        }
+
+                        // DEBUG LOGGING
+                        if (idx === 0) {
+                            console.log('--- DEBUG ITEM 0 ---');
+                            console.log('Vencimento raw:', client.vencimento);
+                            console.log('VencimentoStr:', vencimentoStr);
+                            console.log('Parsed DueDate:', dueDateObj);
+                            console.log('Days Overdue:', daysOverdue);
+                            console.log('Interest Rate:', interestRate, 'Penalty Rate:', penaltyRate);
+                            console.log('Base Value:', baseValue);
+                            console.log('Message before replace:', message);
+                            console.log('Has {juros}?:', message.includes('{juros}'));
+                        }
+
+                        let interestAmount = 0;
+                        let penaltyAmount = 0;
+
+                        if (daysOverdue > 0) {
+                            // Monthly Rate / 30 * Days
+                            interestAmount = baseValue * ((interestRate / 100) / 30) * daysOverdue;
+                            penaltyAmount = baseValue * (penaltyRate / 100);
+                        }
+
                         const totalAmount = baseValue + interestAmount + penaltyAmount;
 
                         const formattedTotal = totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                         const formattedInterest = interestAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                         const formattedPenalty = penaltyAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+
+                        // Explicitly replace with calculated values using string replacement
                         if (message.includes('{valorparcelavencida}')) {
-                            message = message.replace(/{valorparcelavencida}/g, formattedTotal);
+                            message = message.split('{valorparcelavencida}').join(formattedTotal);
                         }
                         if (message.includes('{juros}')) {
-                            message = message.replace(/{juros}/g, formattedInterest);
+                            message = message.split('{juros}').join(formattedInterest);
                         }
                         if (message.includes('{multa}')) {
-                            message = message.replace(/{multa}/g, formattedPenalty);
+                            message = message.split('{multa}').join(formattedPenalty);
                         }
+
+
 
 
 
@@ -1453,6 +1488,82 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                     }
                     message = message.replace(new RegExp(variable, 'g'), value);
                 });
+
+                // --- CALCULATION LOGIC START ---
+                const interestRate = config.interest_rate || 0;
+                const penaltyRate = config.penalty_rate || 0;
+                const baseType = config.base_value_type || 'valorbrutoparcela';
+
+                let baseValue = 0;
+                // Determine base value key and get value
+                const baseColumn = Object.keys(fieldMap).find(key => key.includes(baseType)) ? fieldMap[Object.keys(fieldMap).find(key => key.includes(baseType))] : baseType;
+
+                if (getValue(client, baseType)) baseValue = getValue(client, baseType);
+                else if (getValue(client, baseColumn)) baseValue = getValue(client, baseColumn);
+                else {
+                    if (baseType.includes('bruto')) baseValue = getValue(client, 'valorbrutoparcela') || 0;
+                    else if (baseType.includes('final')) baseValue = getValue(client, 'valorfinalparcela') || 0;
+                }
+
+                baseValue = parseFloat(baseValue) || 0;
+
+                // Calculate Days Overdue
+                let daysOverdue = 0;
+                const vencimentoStr = getValue(client, 'vencimento') || client.vencimento;
+                let dueDateObj = null;
+
+                if (vencimentoStr) {
+                    if (vencimentoStr instanceof Date) {
+                        dueDateObj = vencimentoStr;
+                    } else if (typeof vencimentoStr === 'string') {
+                        if (vencimentoStr.includes('/')) {
+                            const parts = vencimentoStr.split('/'); // DD/MM/YYYY
+                            if (parts.length === 3) {
+                                dueDateObj = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                            }
+                        } else if (vencimentoStr.includes('-')) {
+                            dueDateObj = new Date(vencimentoStr);
+                        }
+                    }
+                }
+
+                if (dueDateObj) {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    // Ensure date from SQL is treated as local midnight for accurate day diff
+                    // Or if parsed from string, it's already local logic above.
+                    if (dueDateObj.getHours() !== 0) dueDateObj.setHours(0, 0, 0, 0);
+
+                    const diffTime = today.getTime() - dueDateObj.getTime();
+                    daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                }
+
+                let interestAmount = 0;
+                let penaltyAmount = 0;
+
+                if (daysOverdue > 0) {
+                    // Pro-rata Daily: Base * ((Rate/100)/30) * Days
+                    interestAmount = baseValue * ((interestRate / 100) / 30) * daysOverdue;
+                    penaltyAmount = baseValue * (penaltyRate / 100);
+                }
+
+                const totalAmount = baseValue + interestAmount + penaltyAmount;
+
+                const formattedTotal = totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                const formattedInterest = interestAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                const formattedPenalty = penaltyAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+                // Explicitly replace with calculated values using string replacement
+                if (message.includes('{valorparcelavencida}')) {
+                    message = message.split('{valorparcelavencida}').join(formattedTotal);
+                }
+                if (message.includes('{juros}')) {
+                    message = message.split('{juros}').join(formattedInterest);
+                }
+                if (message.includes('{multa}')) {
+                    message = message.split('{multa}').join(formattedPenalty);
+                }
+                // --- CALCULATION LOGIC END ---
 
                 const desc = getValue(client, 'descricaoparcela') || '';
 
