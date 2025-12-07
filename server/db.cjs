@@ -129,6 +129,10 @@ db.serialize(() => {
       if (!columnNames.includes('emission_date')) {
         db.run("ALTER TABLE queue_items ADD COLUMN emission_date TEXT");
       }
+      if (!columnNames.includes('repeat_number')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN repeat_number INTEGER DEFAULT 0");
+        console.log("Added repeat_number column to queue_items");
+      }
     }
   });
 
@@ -144,6 +148,29 @@ db.serialize(() => {
     active INTEGER DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  // Log Cleanup Configuration Table
+  db.run(`CREATE TABLE IF NOT EXISTS log_cleanup_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    log_type TEXT NOT NULL UNIQUE,
+    retention_days INTEGER DEFAULT 15,
+    enabled INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Insert default cleanup configs if empty
+  db.get("SELECT count(*) as count FROM log_cleanup_config", (err, row) => {
+    if (!err && row.count === 0) {
+      const stmt = db.prepare("INSERT INTO log_cleanup_config (log_type, retention_days, enabled) VALUES (?, ?, ?)");
+      stmt.run('ERRO', 15, 1);
+      stmt.run('AGENDAMENTO', 15, 1);
+      stmt.run('INFO', 15, 1);
+      stmt.run('DUPLICATAS', 15, 1);
+      stmt.finalize();
+      console.log("Default log cleanup configuration inserted.");
+    }
+  });
 
   // Duplicate Logs Table
   db.run(`CREATE TABLE IF NOT EXISTS duplicate_logs (

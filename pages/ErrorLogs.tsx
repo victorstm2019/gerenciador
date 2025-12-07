@@ -21,8 +21,15 @@ interface DuplicateLog {
   created_at: string;
 }
 
+interface CleanupConfig {
+  id: number;
+  log_type: string;
+  retention_days: number;
+  enabled: number;
+}
+
 const ErrorLogs: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'system' | 'duplicates'>('system');
+  const [activeTab, setActiveTab] = useState<'system' | 'duplicates' | 'config'>('system');
 
   // System Logs State
   const [logs, setLogs] = useState<ErrorLog[]>([]);
@@ -38,9 +45,14 @@ const ErrorLogs: React.FC = () => {
   const [loadingDuplicates, setLoadingDuplicates] = useState(false);
   const [selectedDuplicates, setSelectedDuplicates] = useState<number[]>([]);
 
+  // Cleanup Config State
+  const [cleanupConfigs, setCleanupConfigs] = useState<CleanupConfig[]>([]);
+  const [loadingConfigs, setLoadingConfigs] = useState(false);
+
   useEffect(() => {
     fetchLogs();
     fetchDuplicateLogs();
+    fetchCleanupConfigs();
   }, []);
 
   const fetchLogs = () => {
@@ -67,6 +79,34 @@ const ErrorLogs: React.FC = () => {
         console.error("Error fetching duplicate logs:", err);
         setLoadingDuplicates(false);
       });
+  };
+
+  const fetchCleanupConfigs = () => {
+    setLoadingConfigs(true);
+    api.get<CleanupConfig[]>('/api/logs/cleanup-config')
+      .then(data => {
+        setCleanupConfigs(data || []);
+        setLoadingConfigs(false);
+      })
+      .catch(err => {
+        console.error("Error fetching cleanup configs:", err);
+        setLoadingConfigs(false);
+      });
+  };
+
+  const saveCleanupConfigs = () => {
+    api.post('/api/logs/cleanup-config', cleanupConfigs)
+      .then(() => {
+        alert('Configuração salva com sucesso!');
+        fetchCleanupConfigs();
+      })
+      .catch(err => alert('Erro ao salvar configuração: ' + err.message));
+  };
+
+  const updateCleanupConfig = (logType: string, field: 'retention_days' | 'enabled', value: number) => {
+    setCleanupConfigs(prev => prev.map(config => 
+      config.log_type === logType ? { ...config, [field]: value } : config
+    ));
   };
 
   const deleteDuplicateLogs = (ids: number[], all: boolean = false) => {
@@ -210,39 +250,49 @@ const ErrorLogs: React.FC = () => {
           >
             Duplicatas
           </button>
+          <button
+            onClick={() => setActiveTab('config')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'config'
+              ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+              }`}
+          >
+            Configurações
+          </button>
         </div>
       </div>
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <div className="flex flex-col lg:flex-row gap-4 mb-6">
-          <div className="w-full lg:w-64">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Buscar</label>
-            <input
-              type="text"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-              placeholder={activeTab === 'system' ? "Buscar na mensagem..." : "Buscar cliente ou ID..."}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <div className="w-full lg:w-48">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">De</label>
-            <input
-              type="date"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
-          </div>
-          <div className="w-full lg:w-48">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Até</label>
-            <input
-              type="date"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
-          </div>
+        {activeTab !== 'config' && (
+          <div className="flex flex-col lg:flex-row gap-4 mb-6">
+            <div className="w-full lg:w-64">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Buscar</label>
+              <input
+                type="text"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                placeholder={activeTab === 'system' ? "Buscar na mensagem..." : "Buscar cliente ou ID..."}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <div className="w-full lg:w-48">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">De</label>
+              <input
+                type="date"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+            </div>
+            <div className="w-full lg:w-48">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Até</label>
+              <input
+                type="date"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+            </div>
 
           {activeTab === 'system' && (
             <div className="w-full lg:w-48">
@@ -254,7 +304,7 @@ const ErrorLogs: React.FC = () => {
               >
                 <option value="">Todos</option>
                 <option value="ERRO">Erro</option>
-                <option value="SCHEDULER">Agendamento</option>
+                <option value="AGENDAMENTO">Agendamento</option>
                 <option value="INFO">Informativo</option>
               </select>
             </div>
@@ -309,10 +359,82 @@ const ErrorLogs: React.FC = () => {
               </button>
             </div>
           )}
-        </div>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
-          {activeTab === 'system' ? (
+          {activeTab === 'config' ? (
+            <div className="space-y-6">
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                <div className="flex items-start">
+                  <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 mr-3">info</span>
+                  <div>
+                    <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-1">Limpeza Automática de Logs</h3>
+                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                      Configure quantos dias os logs devem ser mantidos antes de serem automaticamente excluídos.
+                      A limpeza é executada diariamente às 12h (meio-dia).
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {loadingConfigs ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                  <p className="mt-2 text-gray-600 dark:text-gray-400">Carregando configurações...</p>
+                </div>
+              ) : cleanupConfigs.length === 0 ? (
+                <div className="text-center py-8 text-gray-600 dark:text-gray-400">
+                  <p>Nenhuma configuração encontrada. Reinicie o servidor para criar as configurações padrão.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {cleanupConfigs.map(config => (
+                  <div key={config.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <div className="flex items-center space-x-4 flex-1">
+                      <input
+                        type="checkbox"
+                        checked={config.enabled === 1}
+                        onChange={(e) => updateCleanupConfig(config.log_type, 'enabled', e.target.checked ? 1 : 0)}
+                        className="w-5 h-5 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <div className="flex-1">
+                        <label className="font-medium text-gray-900 dark:text-white">
+                          {config.log_type === 'DUPLICATAS' ? 'Logs de Duplicatas' : 
+                           config.log_type === 'ERRO' ? 'Logs de Erro' :
+                           config.log_type === 'AGENDAMENTO' ? 'Logs de Agendamento' :
+                           config.log_type === 'INFO' ? 'Logs Informativos' : config.log_type}
+                        </label>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <label className="text-sm text-gray-600 dark:text-gray-400">Manter por</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="365"
+                        value={config.retention_days}
+                        onChange={(e) => updateCleanupConfig(config.log_type, 'retention_days', parseInt(e.target.value) || 15)}
+                        className="w-20 px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-600 dark:border-gray-500 dark:text-white text-center"
+                        disabled={config.enabled === 0}
+                      />
+                      <label className="text-sm text-gray-600 dark:text-gray-400">dias</label>
+                    </div>
+                  </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex justify-end">
+                <button
+                  onClick={saveCleanupConfigs}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
+                >
+                  Salvar Configurações
+                </button>
+              </div>
+            </div>
+          ) : activeTab === 'system' ? (
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300">
                 <tr>
@@ -346,7 +468,7 @@ const ErrorLogs: React.FC = () => {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 rounded text-xs uppercase font-bold ${log.tipo === 'ERRO' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
-                        log.tipo === 'SCHEDULER' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                        log.tipo === 'AGENDAMENTO' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
                           log.tipo === 'INFO' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
                             'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
                         }`}>

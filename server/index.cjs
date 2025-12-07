@@ -839,18 +839,24 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                     ORDER BY CONVERT(DATE, vencimento, 103)
                 `;
             } else { // overdue
-                const daysBack = config.overdue_days || 3;
-                const targetDate = new Date(today);
-                targetDate.setDate(today.getDate() - daysBack);
+                const daysOverdue = config.overdue_days || 3;
+                const maxRecoveryDays = 7; // Limite máximo de recuperação
+                
+                const minDate = new Date(today);
+                minDate.setDate(today.getDate() - maxRecoveryDays);
+                
+                const maxDate = new Date(today);
+                maxDate.setDate(today.getDate() - daysOverdue);
 
+                // Busca parcelas entre X dias e limite de recuperação
                 finalQuery = `
                     WITH BaseData AS (
                         ${cleanBaseQuery}
                     )
                     SELECT *
                     FROM BaseData
-                    WHERE CONVERT(DATE, vencimento, 103) < '${today.toISOString().split('T')[0]}'
-                    AND CONVERT(DATE, vencimento, 103) >= '${targetDate.toISOString().split('T')[0]}'
+                    WHERE CONVERT(DATE, vencimento, 103) >= '${minDate.toISOString().split('T')[0]}'
+                    AND CONVERT(DATE, vencimento, 103) <= '${maxDate.toISOString().split('T')[0]}'
                     ORDER BY CONVERT(DATE, vencimento, 103) DESC
                 `;
             }
@@ -2583,8 +2589,93 @@ app.get('/api/logs', (req, res) => {
     });
 });
 
+// Get log cleanup configuration
+app.get('/api/logs/cleanup-config', authMiddleware, (req, res) => {
+    db.all("SELECT * FROM log_cleanup_config ORDER BY log_type", (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows || []);
+    });
+});
+
+// Update log cleanup configuration
+app.post('/api/logs/cleanup-config', authMiddleware, (req, res) => {
+    const configs = req.body; // Array of {log_type, retention_days, enabled}
+
+    if (!Array.isArray(configs)) {
+        res.status(400).json({ error: "Expected array of configs" });
+        return;
+    }
+
+    const stmt = db.prepare(`
+        UPDATE log_cleanup_config 
+        SET retention_days = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP 
+        WHERE log_type = ?
+    `);
+
+    let errors = [];
+    configs.forEach(config => {
+        stmt.run(config.retention_days, config.enabled ? 1 : 0, config.log_type, (err) => {
+            if (err) errors.push(err.message);
+        });
+    });
+
+    stmt.finalize((err) => {
+        if (err || errors.length > 0) {
+            res.status(500).json({ error: errors.join('; ') || err.message });
+            return;
+        }
+        res.json({ message: "Configuração de limpeza atualizada com sucesso" });
+    });
+});
+
+// Function to perform automatic log cleanup
+function performLogCleanup() {
+    db.all("SELECT * FROM log_cleanup_config WHERE enabled = 1", (err, configs) => {
+        if (err || !configs) return;
+
+        configs.forEach(config => {
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - config.retention_days);
+            const cutoffStr = cutoffDate.toISOString();
+
+            if (config.log_type === 'DUPLICATAS') {
+                db.run(
+                    "DELETE FROM duplicate_logs WHERE created_at < ?",
+                    [cutoffStr],
+                    function(err) {
+                        if (!err && this.changes > 0) {
+                            console.log(`Limpeza automática: ${this.changes} logs de duplicatas removidos (>${config.retention_days} dias)`);
+                        }
+                    }
+                );
+            } else {
+                db.run(
+                    "DELETE FROM error_logs WHERE tipo = ? AND data_hora < ?",
+                    [config.log_type, cutoffStr],
+                    function(err) {
+                        if (!err && this.changes > 0) {
+                            console.log(`Limpeza automática: ${this.changes} logs de ${config.log_type} removidos (>${config.retention_days} dias)`);
+                        }
+                    }
+                );
+            }
+        });
+    });
+}
+
+// Run cleanup daily at 12 PM (noon)
+setInterval(() => {
+    const now = new Date();
+    if (now.getHours() === 12 && now.getMinutes() < 30) {
+        performLogCleanup();
+    }
+}, 30 * 60 * 1000); // Check every 30 minutes
+
 // --- Scheduler for Automatic Generation ---
-const SCHEDULER_INTERVAL = 60 * 1000; // Check every minute
+const SCHEDULER_INTERVAL = 30 * 60 * 1000; // Check every 30 minutes
 
 // Helper function to get config
 function getConfig() {
