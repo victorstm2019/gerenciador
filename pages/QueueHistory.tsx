@@ -4,6 +4,7 @@ import { formatPhoneDisplay } from '../utils/phoneFormatter';
 
 interface QueueItem {
     id: string;
+    installmentId?: string;
     code: string;
     clientName: string;
     cpf: string;
@@ -740,7 +741,7 @@ const QueueHistory: React.FC = () => {
                                                 title="Selecionar todos os itens"
                                             />
                                         </th>
-                                        <th className="px-4 py-3">Código</th>
+                                        <th className="px-4 py-3">ID Parcela</th>
                                         <th className="px-4 py-3">Cliente</th>
                                         <th className="px-4 py-3">TELEFONE</th>
                                         <th className="px-4 py-3">Vencimento</th>
@@ -767,7 +768,7 @@ const QueueHistory: React.FC = () => {
                                                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                                 />
                                             </td>
-                                            <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{item.code}</td>
+                                            <td className="px-4 py-3 font-mono text-xs text-gray-900 dark:text-white">{item.installmentId || item.id}</td>
                                             <td className="px-4 py-3">
                                                 <div>
                                                     <p className="font-medium text-gray-900 dark:text-white">{item.clientName}</p>

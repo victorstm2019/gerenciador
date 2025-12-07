@@ -1812,6 +1812,7 @@ app.get('/api/queue/today', authMiddleware, async (req, res) => {
                 // Fetch descriptions for all items
                 const mappedRows = (rows || []).map(row => ({
                     id: row.id,
+                    installmentId: row.installment_id,
                     code: row.client_code || row.code,
                     clientName: row.client_name,
                     cpf: row.cpf,
@@ -1836,6 +1837,7 @@ app.get('/api/queue/today', authMiddleware, async (req, res) => {
             // Fallback to basic mapping
             const mappedRows = (rows || []).map(row => ({
                 id: row.id,
+                installmentId: row.installment_id,
                 code: row.client_code || row.code,
                 clientName: row.client_name,
                 cpf: row.cpf,

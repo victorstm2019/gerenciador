@@ -464,7 +464,7 @@ const ErrorLogs: React.FC = () => {
                       />
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-gray-500 dark:text-gray-400">
-                      {new Date(log.data_hora).toLocaleString('pt-BR')}
+                      {new Date(log.data_hora + 'Z').toLocaleString('pt-BR')}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 rounded text-xs uppercase font-bold ${log.tipo === 'ERRO' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
@@ -525,7 +525,7 @@ const ErrorLogs: React.FC = () => {
                       />
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-gray-500 dark:text-gray-400">
-                      {new Date(log.created_at).toLocaleString('pt-BR')}
+                      {new Date(log.created_at + 'Z').toLocaleString('pt-BR')}
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
                       <div>{log.client_name}</div>
