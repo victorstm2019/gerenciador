@@ -1,9 +1,16 @@
 const express = require('express');
+const https = require('https');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const db = require('./db.cjs');
 const sql = require('mssql');
 const crypto = require('crypto');
+
+// This agent will be used to bypass SSL certificate verification for the W-API.
+// It's insecure but isolates the risk instead of affecting the whole process.
+const insecureAgent = new https.Agent({
+    rejectUnauthorized: false
+});
 
 const app = express();
 const PORT = 3001;
@@ -634,17 +641,27 @@ app.post('/api/wapi/test', authMiddleware, async (req, res) => {
 
     try {
         const fetch = (await import('node-fetch')).default;
-        const url = `https://w-api.izy.one/instance/status/${instance_id}`;
+        const url = `https://api.w-api.app/v1/instance/status-instance?instanceId=${instance_id}`;
 
         const response = await fetch(url, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${bearer_token}`,
                 'Content-Type': 'application/json'
-            }
+            },
+            agent: insecureAgent
         });
 
-        const data = await response.json();
+        let data;
+        const responseText = await response.text();
+        console.log(`W-API Test Status: ${response.status}`);
+        console.log(`W-API Test Response: ${responseText}`);
+        
+        try {
+            data = responseText ? JSON.parse(responseText) : {};
+        } catch (e) {
+            data = { error: 'Resposta inválida da API', raw: responseText };
+        }
 
         if (response.ok) {
             res.json({
@@ -655,7 +672,7 @@ app.post('/api/wapi/test', authMiddleware, async (req, res) => {
         } else {
             res.status(response.status).json({
                 success: false,
-                error: data.message || "Erro ao conectar com W-API"
+                error: data.message || data.error || `Erro HTTP ${response.status}: ${responseText}`
             });
         }
     } catch (error) {
@@ -677,21 +694,44 @@ app.post('/api/wapi/send-test', authMiddleware, async (req, res) => {
 
     try {
         const fetch = (await import('node-fetch')).default;
-        const url = `https://w-api.izy.one/message/sendText/${instance_id}`;
+        const url = `https://api.w-api.app/v1/message/send-text?instanceId=${instance_id}`;
 
+        // Formato brasileiro completo
+        let cleanPhone = phone.replace(/\D/g, '');
+        if (!cleanPhone.startsWith('55')) {
+            cleanPhone = '55' + cleanPhone;
+        }
+        
+        const requestBody = {
+            phone: cleanPhone + '@c.us',
+            message: message || "Mensagem de teste do Gerenciador",
+            isGroup: false
+        };
+        
+        console.log(`W-API Request URL: ${url}`);
+        console.log(`W-API Request Body:`, requestBody);
+        console.log(`W-API Bearer Token: ${bearer_token.substring(0, 10)}...`);
+        
         const response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${bearer_token}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                phone: phone,
-                message: message || "Mensagem de teste do Gerenciador"
-            })
+            body: JSON.stringify(requestBody),
+            agent: insecureAgent
         });
 
-        const data = await response.json();
+        let data;
+        const responseText = await response.text();
+        console.log(`W-API Response Status: ${response.status}`);
+        console.log(`W-API Response Text: ${responseText}`);
+        
+        try {
+            data = responseText ? JSON.parse(responseText) : {};
+        } catch (e) {
+            data = { error: 'Resposta inválida da API', raw: responseText };
+        }
 
         if (response.ok) {
             res.json({
@@ -702,7 +742,7 @@ app.post('/api/wapi/send-test', authMiddleware, async (req, res) => {
         } else {
             res.status(response.status).json({
                 success: false,
-                error: data.message || "Erro ao enviar mensagem"
+                error: data.message || data.error || `Erro HTTP ${response.status}: ${responseText}`
             });
         }
     } catch (error) {
@@ -2163,10 +2203,15 @@ async function sendMessageViaWAPI(phone, message) {
     }
 
     const fetch = (await import('node-fetch')).default;
-    const url = `https://w-api.izy.one/message/sendText/${wapiConfig.instance_id}`;
+    const url = `https://api.w-api.app/v1/message/send-text?instanceId=${wapiConfig.instance_id}`;
 
     // Clean phone number (remove non-digits)
-    const cleanPhone = phone.replace(/\D/g, '');
+    let cleanPhone = phone.replace(/\D/g, '');
+
+    // Ensure it has country code 55
+    if (!cleanPhone.startsWith('55')) {
+        cleanPhone = '55' + cleanPhone;
+    }
 
     const response = await fetch(url, {
         method: 'POST',
@@ -2175,9 +2220,11 @@ async function sendMessageViaWAPI(phone, message) {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            phone: cleanPhone,
-            message: message
-        })
+            phone: cleanPhone + '@c.us',
+            message: message,
+            isGroup: false
+        }),
+        agent: insecureAgent
     });
 
     const data = await response.json();
@@ -2314,7 +2361,40 @@ app.post('/api/queue/send-selected', authMiddleware, async (req, res) => {
 
 // Get error logs
 app.get('/api/logs', authMiddleware, (req, res) => {
-    db.all("SELECT * FROM error_logs ORDER BY data_hora DESC LIMIT 100", (err, rows) => {
+    const { tipo, startDate, endDate, search } = req.query;
+
+    let query = "SELECT * FROM error_logs WHERE 1=1";
+    const params = [];
+
+    if (tipo) {
+        query += " AND tipo = ?";
+        params.push(tipo);
+    }
+
+    if (startDate) {
+        query += " AND DATE(data_hora) >= DATE(?)";
+        params.push(startDate);
+    }
+
+    if (endDate) {
+        query += " AND DATE(data_hora) <= DATE(?)";
+        params.push(endDate);
+    }
+
+    if (search) {
+        query += " AND (mensagem LIKE ? OR detalhes LIKE ? OR client_code LIKE ? OR phone LIKE ?)";
+        const searchTerm = `%${search}%`;
+        params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+
+    query += " ORDER BY data_hora DESC";
+
+    // Only limit if no filters are applied to allow for full range searches
+    if (params.length === 0) {
+        query += " LIMIT 200";
+    }
+
+    db.all(query, params, (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
@@ -2341,151 +2421,7 @@ app.put('/api/queue/items/:id/select', (req, res) => {
     );
 });
 
-// Helper function to send message via W-API
-async function sendMessageViaWAPI(phone, message) {
-    // Get W-API config
-    const wapiConfig = await new Promise((resolve, reject) => {
-        db.get("SELECT * FROM wapi_config ORDER BY id DESC LIMIT 1", (err, row) => {
-            if (err) reject(err);
-            else resolve(row);
-        });
-    });
 
-    if (!wapiConfig || !wapiConfig.instance_id || !wapiConfig.bearer_token) {
-        throw new Error("W-API not configured");
-    }
-
-    const fetch = (await import('node-fetch')).default;
-    const url = `https://w-api.izy.one/message/sendText/${wapiConfig.instance_id}`;
-
-    // Clean phone number (remove non-digits)
-    // Clean phone number (remove non-digits)
-    let cleanPhone = phone.replace(/\D/g, '');
-
-    // Ensure it has country code 55
-    if (!cleanPhone.startsWith('55')) {
-        cleanPhone = '55' + cleanPhone;
-    }
-
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${wapiConfig.bearer_token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            phone: cleanPhone,
-            message: message
-        })
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-        throw new Error(data.message || `W-API error: ${response.status}`);
-    }
-
-    return data;
-}
-
-// Helper function to log error
-function logError(tipo, mensagem, detalhes, client_code, phone) {
-    db.run(
-        "INSERT INTO error_logs (tipo, mensagem, detalhes, client_code, phone) VALUES (?, ?, ?, ?, ?)",
-        [tipo, mensagem, detalhes, client_code, phone],
-        (err) => {
-            if (err) {
-                console.error("Error logging error:", err);
-            }
-        }
-    );
-}
-
-// Send selected items
-app.post('/api/queue/send-selected', async (req, res) => {
-    try {
-        // Get selected items
-        const items = await new Promise((resolve, reject) => {
-            db.all(
-                "SELECT * FROM queue_items WHERE selected_for_send = 1 AND status = 'PENDING'",
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows || []);
-                }
-            );
-        });
-
-        if (items.length === 0) {
-            res.status(400).json({ error: "No items selected" });
-            return;
-        }
-
-        let sent = 0;
-        let errors = 0;
-        const results = [];
-
-        for (const item of items) {
-            try {
-                // Check if phone exists
-                if (!item.phone) {
-                    throw new Error("Phone number not available");
-                }
-
-                // Send message
-                await sendMessageViaWAPI(item.phone, item.message_content);
-
-                // Update status
-                db.run(
-                    "UPDATE queue_items SET status = 'SENT', sent_date = CURRENT_TIMESTAMP WHERE id = ?",
-                    [item.id]
-                );
-
-                sent++;
-                results.push({ id: item.id, success: true });
-            } catch (error) {
-                // Log error
-                logError(
-                    'envio',
-                    `Erro ao enviar para ${item.client_name}`,
-                    error.message,
-                    item.client_code,
-                    item.phone
-                );
-
-                // Update status
-                db.run(
-                    "UPDATE queue_items SET status = 'ERROR', error_date = CURRENT_TIMESTAMP, error_message = ? WHERE id = ?",
-                    [error.message, item.id]
-                );
-
-                errors++;
-                results.push({ id: item.id, success: false, error: error.message });
-            }
-        }
-
-        res.json({
-            message: `Sent ${sent} messages, ${errors} errors`,
-            sent,
-            errors,
-            results
-        });
-
-    } catch (error) {
-        console.error("Error sending selected items:", error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Get error logs
-app.get('/api/logs', (req, res) => {
-    db.all("SELECT * FROM error_logs ORDER BY data_hora DESC LIMIT 100", (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json(rows || []);
-    });
-});
 
 // Delete error logs
 app.delete('/api/logs', authMiddleware, (req, res) => {

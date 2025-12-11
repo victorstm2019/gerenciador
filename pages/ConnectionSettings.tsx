@@ -215,8 +215,7 @@ const ConnectionSettings: React.FC = () => {
             <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-3 mb-4">
               <p className="text-xs text-blue-700 dark:text-blue-300 flex items-center gap-2">
                 <span className="material-symbols-outlined text-sm">info</span>
-                <span>URL da API: <strong>https://w-api.izy.one/</strong></span>
-              </p>
+                                            <span>URL da API: <strong>https://api.w-api.app/</strong></span>              </p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Instance ID</label>
