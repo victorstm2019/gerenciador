@@ -207,6 +207,7 @@ app.post('/api/config', authMiddleware, (req, res) => {
     const {
         send_time,
         auto_send_enabled,
+        auto_send_messages,
         reminder_enabled,
         reminder_days,
         reminder_msg,
@@ -226,6 +227,7 @@ app.post('/api/config', authMiddleware, (req, res) => {
     const sqlQuery = `UPDATE message_config SET 
     send_time = ?, 
     auto_send_enabled = ?,
+    auto_send_messages = ?,
     reminder_enabled = ?, 
     reminder_days = ?, 
     reminder_msg = ?,
@@ -244,6 +246,7 @@ app.post('/api/config', authMiddleware, (req, res) => {
     db.run(sqlQuery, [
         send_time,
         auto_send_enabled ? 1 : 0,
+        auto_send_messages ? 1 : 0,
         reminder_enabled ? 1 : 0,
         reminder_days,
         reminder_msg,
@@ -2359,6 +2362,89 @@ app.post('/api/queue/send-selected', authMiddleware, async (req, res) => {
     }
 });
 
+// Send auto-generated items (for scheduler)
+app.post('/api/queue/send-auto', authMiddleware, async (req, res) => {
+    try {
+        // Get auto-generated pending items
+        const items = await new Promise((resolve, reject) => {
+            db.all(
+                "SELECT * FROM queue_items WHERE send_mode = 'AUTO' AND status = 'PENDING'",
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
+        });
+
+        if (items.length === 0) {
+            res.json({ message: "No auto items to send", sent: 0, errors: 0 });
+            return;
+        }
+
+        let sent = 0;
+        let errors = 0;
+        const results = [];
+
+        for (const item of items) {
+            try {
+                // Check if phone exists
+                if (!item.phone) {
+                    throw new Error("Phone number not available");
+                }
+
+                // Send message
+                await sendMessageViaWAPI(item.phone, item.message_content);
+
+                // Log successful send
+                logEvent('INFO', `Mensagem automática enviada para ${item.client_name}`, `Cliente: ${item.client_code}, Telefone: ${item.phone}`);
+
+                // Update status
+                db.run(
+                    "UPDATE queue_items SET status = 'SENT', sent_date = CURRENT_TIMESTAMP WHERE id = ?",
+                    [item.id]
+                );
+
+                sent++;
+                results.push({ id: item.id, success: true });
+            } catch (error) {
+                // Log error
+                logError(
+                    'envio_auto',
+                    `Erro no envio automático para ${item.client_name}`,
+                    error.message,
+                    item.client_code,
+                    item.phone
+                );
+
+                // Update status
+                db.run(
+                    "UPDATE queue_items SET status = 'ERROR', error_date = CURRENT_TIMESTAMP, error_message = ? WHERE id = ?",
+                    [error.message, item.id]
+                );
+
+                errors++;
+                results.push({ id: item.id, success: false, error: error.message });
+            }
+        }
+
+        // Log summary
+        if (sent > 0 || errors > 0) {
+            logEvent('INFO', `Envio automático concluído: ${sent} enviadas, ${errors} erros`, JSON.stringify({ sent, errors, total: items.length }));
+        }
+
+        res.json({
+            message: `Auto-sent ${sent} messages, ${errors} errors`,
+            sent,
+            errors,
+            results
+        });
+
+    } catch (error) {
+        console.error("Error sending auto items:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get error logs
 app.get('/api/logs', authMiddleware, (req, res) => {
     const { tipo, startDate, endDate, search } = req.query;
@@ -2676,6 +2762,8 @@ setInterval(async () => {
         // 5. Execute automatic generation
         logScheduler("Iniciando geração automática de mensagens", `Horário: ${currentTime}`);
 
+        let totalGenerated = 0;
+
         // Only run if there are active configurations for auto-generation
         try {
             const remindersResponse = await fetch(`http://localhost:${PORT}/api/queue/generate-test`, {
@@ -2691,7 +2779,7 @@ setInterval(async () => {
                 const reminders = await remindersResponse.json();
                 logScheduler(`Busca de Lembretes realizada`, `Encontrados: ${reminders.length}`);
                 if (reminders.length > 0) {
-                    await fetch(`http://localhost:${PORT}/api/queue/add-items`, {
+                    const addResponse = await fetch(`http://localhost:${PORT}/api/queue/add-items`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -2699,7 +2787,9 @@ setInterval(async () => {
                         },
                         body: JSON.stringify({ items: reminders, send_mode: 'AUTO' })
                     });
-                    logScheduler(`Lembretes adicionados à fila`, `${reminders.length} itens`);
+                    const addResult = await addResponse.json();
+                    totalGenerated += addResult.inserted || 0;
+                    logScheduler(`Lembretes adicionados à fila`, `${addResult.inserted || 0} itens`);
                 }
             } else {
                 logScheduler(`Erro ao buscar lembretes`, `Status: ${remindersResponse.status}`);
@@ -2723,7 +2813,7 @@ setInterval(async () => {
                 const overdue = await overdueResponse.json();
                 logScheduler(`Busca de Vencimentos realizada`, `Encontrados: ${overdue.length}`);
                 if (overdue.length > 0) {
-                    await fetch(`http://localhost:${PORT}/api/queue/add-items`, {
+                    const addResponse = await fetch(`http://localhost:${PORT}/api/queue/add-items`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -2731,7 +2821,9 @@ setInterval(async () => {
                         },
                         body: JSON.stringify({ items: overdue, send_mode: 'AUTO' })
                     });
-                    logScheduler(`Mensagens de vencimento adicionadas à fila`, `${overdue.length} itens`);
+                    const addResult = await addResponse.json();
+                    totalGenerated += addResult.inserted || 0;
+                    logScheduler(`Mensagens de vencimento adicionadas à fila`, `${addResult.inserted || 0} itens`);
                 }
             } else {
                 logScheduler(`Erro ao buscar vencimentos`, `Status: ${overdueResponse.status}`);
@@ -2740,7 +2832,31 @@ setInterval(async () => {
             logScheduler(`Erro na requisição de vencimentos`, e.message);
         }
 
-        // 6. Mark as executed
+        // 6. Auto-send messages if enabled
+        if (config.auto_send_messages && totalGenerated > 0) {
+            try {
+                logScheduler("Iniciando envio automático de mensagens", `${totalGenerated} mensagens geradas`);
+                
+                const sendResponse = await fetch(`http://localhost:${PORT}/api/queue/send-auto`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${SYSTEM_TOKEN}`
+                    }
+                });
+
+                if (sendResponse.ok) {
+                    const sendResult = await sendResponse.json();
+                    logScheduler(`Envio automático concluído`, `${sendResult.sent || 0} enviadas, ${sendResult.errors || 0} erros`);
+                } else {
+                    logScheduler(`Erro no envio automático`, `Status: ${sendResponse.status}`);
+                }
+            } catch (e) {
+                logScheduler(`Erro no envio automático`, e.message);
+            }
+        }
+
+        // 7. Mark as executed
         await markAsExecuted();
 
     } catch (error) {

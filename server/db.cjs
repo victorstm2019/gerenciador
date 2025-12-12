@@ -46,6 +46,10 @@ db.serialize(() => {
         db.run("ALTER TABLE message_config ADD COLUMN auto_send_enabled INTEGER DEFAULT 0");
         console.log("Added auto_send_enabled column to message_config");
       }
+      if (!columnNames.includes('auto_send_messages')) {
+        db.run("ALTER TABLE message_config ADD COLUMN auto_send_messages INTEGER DEFAULT 0");
+        console.log("Added auto_send_messages column to message_config");
+      }
       if (!columnNames.includes('reminder_repeat_times')) {
         db.run("ALTER TABLE message_config ADD COLUMN reminder_repeat_times INTEGER DEFAULT 0");
         console.log("Added reminder_repeat_times column to message_config");
@@ -65,6 +69,18 @@ db.serialize(() => {
       if (!columnNames.includes('last_auto_run')) {
         db.run("ALTER TABLE message_config ADD COLUMN last_auto_run DATETIME");
         console.log("Added last_auto_run column to message_config");
+      }
+      if (!columnNames.includes('interest_rate')) {
+        db.run("ALTER TABLE message_config ADD COLUMN interest_rate REAL DEFAULT 0");
+        console.log("Added interest_rate column to message_config");
+      }
+      if (!columnNames.includes('penalty_rate')) {
+        db.run("ALTER TABLE message_config ADD COLUMN penalty_rate REAL DEFAULT 0");
+        console.log("Added penalty_rate column to message_config");
+      }
+      if (!columnNames.includes('base_value_type')) {
+        db.run("ALTER TABLE message_config ADD COLUMN base_value_type TEXT DEFAULT 'valorbrutoparcela'");
+        console.log("Added base_value_type column to message_config");
       }
     }
   });

@@ -54,6 +54,7 @@ const QueueHistory: React.FC = () => {
     });
     const [showManualWarning, setShowManualWarning] = useState(false);
     const [selectedBatchTypes, setSelectedBatchTypes] = useState<('reminder' | 'overdue')[]>([]);
+    const [autoSendMessages, setAutoSendMessages] = useState(false);
 
     // Date range generation states
     const [showDateRangeModal, setShowDateRangeModal] = useState(false);
@@ -70,6 +71,7 @@ const QueueHistory: React.FC = () => {
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
     const [selectAll, setSelectAll] = useState(false);
     const [sending, setSending] = useState(false);
+    const [autoSending, setAutoSending] = useState(false);
 
     // Sorting and filtering states
     const [sortBy, setSortBy] = useState<'code' | 'name' | 'dueDate' | 'value' | 'status'>('code');
@@ -90,11 +92,15 @@ const QueueHistory: React.FC = () => {
         setLoading(true);
         Promise.all([
             api.get<QueueItem[]>('/api/queue/today'),
-            api.get<BlockedClient[]>('/api/blocked')
+            api.get<BlockedClient[]>('/api/blocked'),
+            api.get<any>('/api/config')
         ])
-            .then(([queueData, blockedData]) => {
+            .then(([queueData, blockedData, configData]) => {
                 setQueue(queueData || []);
                 setBlocked(blockedData || []);
+                if (configData) {
+                    setAutoSendMessages(configData.auto_send_messages ?? false);
+                }
                 setLoading(false);
             })
             .catch(err => {
@@ -250,6 +256,16 @@ const QueueHistory: React.FC = () => {
             .catch(err => {
                 setSending(false);
                 alert('Erro ao enviar: ' + err.message);
+            });
+    };
+
+    const handleToggleAutoSend = () => {
+        const newValue = !autoSendMessages;
+        setAutoSendMessages(newValue); // Optimistic update
+        api.post('/api/config', { auto_send_messages: newValue })
+            .catch(err => {
+                setAutoSendMessages(!newValue); // Revert on error
+                alert('Erro ao salvar configuração: ' + err.message);
             });
     };
 
@@ -431,9 +447,10 @@ const QueueHistory: React.FC = () => {
             (filterStatus === 'erro' && item.status === 'ERROR');
 
         const matchesSearch = searchTerm === '' ? true :
-            item.clientName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            item.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            item.cpf?.toLowerCase().includes(searchTerm.toLowerCase());
+            (item.clientName && item.clientName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+            (item.code && item.code.toLowerCase().includes(searchTerm.toLowerCase())) ||
+            (item.cpf && item.cpf.toLowerCase().includes(searchTerm.toLowerCase())) ||
+            (item.installmentId && item.installmentId.toLowerCase().includes(searchTerm.toLowerCase()));
 
         // Filter by type
         if (filterType !== 'all') {
@@ -542,20 +559,36 @@ const QueueHistory: React.FC = () => {
                                 <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Fila & Histórico</h2>
 
                                 {/* Send Mode Toggle */}
-                                <div className="flex items-center gap-3">
-                                    <span className="text-sm text-gray-600 dark:text-gray-400">Modo:</span>
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            className="sr-only peer"
-                                            checked={sendMode === 'manual'}
-                                            onChange={(e) => setSendMode(e.target.checked ? 'manual' : 'queue')}
-                                        />
-                                        <div className="w-20 h-8 bg-green-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-12 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-7 after:w-7 after:transition-all dark:border-gray-600 peer-checked:bg-orange-400"></div>
-                                    </label>
-                                    <span className={`text-sm font-medium ${sendMode === 'queue' ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
-                                        {sendMode === 'queue' ? '🟢 Fila' : '🔶 Manual'}
-                                    </span>
+                                <div className="flex items-center gap-4">
+                                    {sendMode === 'queue' && (
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-sm text-gray-600 dark:text-gray-400">Envio Automático:</span>
+                                            <label className="relative inline-flex items-center cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    className="sr-only peer"
+                                                    checked={autoSendMessages}
+                                                    onChange={handleToggleAutoSend}
+                                                />
+                                                <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                            </label>
+                                        </div>
+                                    )}
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-sm text-gray-600 dark:text-gray-400">Modo:</span>
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="sr-only peer"
+                                                checked={sendMode === 'manual'}
+                                                onChange={(e) => setSendMode(e.target.checked ? 'manual' : 'queue')}
+                                            />
+                                            <div className="w-20 h-8 bg-green-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-12 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-7 after:w-7 after:transition-all dark:border-gray-600 peer-checked:bg-orange-400"></div>
+                                        </label>
+                                        <span className={`text-sm font-medium ${sendMode === 'queue' ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                                            {sendMode === 'queue' ? '🟢 Fila' : '🔶 Manual'}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
 
