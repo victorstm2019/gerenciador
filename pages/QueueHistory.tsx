@@ -54,7 +54,6 @@ const QueueHistory: React.FC = () => {
     });
     const [showManualWarning, setShowManualWarning] = useState(false);
     const [selectedBatchTypes, setSelectedBatchTypes] = useState<('reminder' | 'overdue')[]>([]);
-    const [autoSendMessages, setAutoSendMessages] = useState(false);
 
     // Date range generation states
     const [showDateRangeModal, setShowDateRangeModal] = useState(false);
@@ -71,7 +70,7 @@ const QueueHistory: React.FC = () => {
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
     const [selectAll, setSelectAll] = useState(false);
     const [sending, setSending] = useState(false);
-    const [autoSending, setAutoSending] = useState(false);
+    const [autoSendMessages, setAutoSendMessages] = useState(false);
 
     // Sorting and filtering states
     const [sortBy, setSortBy] = useState<'code' | 'name' | 'dueDate' | 'value' | 'status'>('code');
@@ -107,6 +106,22 @@ const QueueHistory: React.FC = () => {
                 console.error("Error fetching data:", err);
                 setLoading(false);
             });
+    };
+
+    const handleToggleAutoSend = async () => {
+        const newValue = !autoSendMessages;
+        setAutoSendMessages(newValue);
+        
+        try {
+            const currentConfig = await api.get('/api/config');
+            await api.post('/api/config', {
+                ...currentConfig,
+                auto_send_messages: newValue
+            });
+        } catch (err: any) {
+            setAutoSendMessages(!newValue);
+            alert('Erro ao salvar configuração: ' + err.message);
+        }
     };
 
     const generateAndAddToQueue = (messageType: 'reminder' | 'overdue') => {
@@ -210,8 +225,7 @@ const QueueHistory: React.FC = () => {
         setLoading(true);
 
         api.delete<{ deleted: number }>('/api/queue/items/bulk', {
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ids: Array.from(selectedItems) })
+            body: { ids: Array.from(selectedItems) }
         })
             .then(data => {
                 setLoading(false);
@@ -256,16 +270,6 @@ const QueueHistory: React.FC = () => {
             .catch(err => {
                 setSending(false);
                 alert('Erro ao enviar: ' + err.message);
-            });
-    };
-
-    const handleToggleAutoSend = () => {
-        const newValue = !autoSendMessages;
-        setAutoSendMessages(newValue); // Optimistic update
-        api.post('/api/config', { auto_send_messages: newValue })
-            .catch(err => {
-                setAutoSendMessages(!newValue); // Revert on error
-                alert('Erro ao salvar configuração: ' + err.message);
             });
     };
 
@@ -556,7 +560,58 @@ const QueueHistory: React.FC = () => {
                     <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
                         <div className="flex flex-col gap-4 mb-4">
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                                <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Fila & Histórico</h2>
+                                <div className="flex items-center gap-3">
+                                    <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Fila & Histórico</h2>
+                                    <div className="relative group">
+                                        <button className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800 flex items-center justify-center transition-colors">
+                                            <span className="material-symbols-outlined text-lg">help</span>
+                                        </button>
+                                        <div className="absolute left-0 top-10 w-[600px] bg-white dark:bg-gray-900 border-2 border-blue-500 rounded-lg shadow-2xl p-6 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                                            <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400 mb-4 flex items-center gap-2">
+                                                <span className="material-symbols-outlined">info</span>
+                                                Tutorial: Como Funciona o Sistema
+                                            </h3>
+                                            
+                                            <div className="space-y-4 text-sm text-gray-700 dark:text-gray-300">
+                                                <div>
+                                                    <h4 className="font-bold text-green-600 dark:text-green-400 mb-1">🟢 Modo Fila (Automático)</h4>
+                                                    <p className="text-xs leading-relaxed">• Sistema gera mensagens automaticamente no horário configurado (via scheduler a cada 30 min)</p>
+                                                    <p className="text-xs leading-relaxed">• Verifica: modo ativo, se já executou hoje, horário configurado</p>
+                                                    <p className="text-xs leading-relaxed">• Se "Envio Automático" estiver ATIVO: envia imediatamente após gerar</p>
+                                                    <p className="text-xs leading-relaxed">• Se "Envio Automático" estiver INATIVO: apenas adiciona à fila para envio manual</p>
+                                                </div>
+                                                
+                                                <div>
+                                                    <h4 className="font-bold text-orange-600 dark:text-orange-400 mb-1">🔶 Modo Manual</h4>
+                                                    <p className="text-xs leading-relaxed">• Você controla quando gerar e enviar mensagens</p>
+                                                    <p className="text-xs leading-relaxed">• Use os botões "Gerar Lembretes" ou "Gerar Vencidos" para adicionar à fila</p>
+                                                    <p className="text-xs leading-relaxed">• Selecione itens na tabela e clique "Enviar Selecionados"</p>
+                                                    <p className="text-xs leading-relaxed">• Opção "Gerar Vencidos por Data" permite escolher período específico</p>
+                                                </div>
+                                                
+                                                <div>
+                                                    <h4 className="font-bold text-purple-600 dark:text-purple-400 mb-1">📋 Geração de Mensagens</h4>
+                                                    <p className="text-xs leading-relaxed">• <strong>Lembretes:</strong> Parcelas que vencem em X dias (configurável)</p>
+                                                    <p className="text-xs leading-relaxed">• <strong>Vencidos:</strong> Parcelas já vencidas há X dias (configurável)</p>
+                                                    <p className="text-xs leading-relaxed">• Sistema busca dados do SQL Server configurado</p>
+                                                    <p className="text-xs leading-relaxed">• Aplica template de mensagem com variáveis personalizadas</p>
+                                                </div>
+                                                
+                                                <div>
+                                                    <h4 className="font-bold text-blue-600 dark:text-blue-400 mb-1">📤 Envio de Mensagens</h4>
+                                                    <p className="text-xs leading-relaxed">• Mensagens com status PENDING podem ser enviadas</p>
+                                                    <p className="text-xs leading-relaxed">• Sistema verifica lista negativa antes de enviar</p>
+                                                    <p className="text-xs leading-relaxed">• Após envio: status muda para SENT ou ERROR</p>
+                                                    <p className="text-xs leading-relaxed">• Bloqueios podem ser por parcela específica ou cliente completo</p>
+                                                </div>
+                                                
+                                                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded p-2 mt-2">
+                                                    <p className="text-xs text-yellow-800 dark:text-yellow-300"><strong>💡 Dica:</strong> Configure tudo em "Configuração de Mensagens" antes de ativar o Modo Fila!</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
 
                                 {/* Send Mode Toggle */}
                                 <div className="flex items-center gap-4">

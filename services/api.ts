@@ -77,8 +77,12 @@ class ApiService {
         });
     }
 
-    public delete<T>(endpoint: string, options?: RequestOptions): Promise<T> {
-        return this.request<T>(endpoint, { ...options, method: 'DELETE' });
+    public delete<T>(endpoint: string, options?: RequestOptions & { body?: any }): Promise<T> {
+        const requestOptions: RequestOptions = { ...options, method: 'DELETE' };
+        if (options?.body) {
+            requestOptions.body = JSON.stringify(options.body);
+        }
+        return this.request<T>(endpoint, requestOptions);
     }
 }
 

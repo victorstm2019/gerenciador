@@ -1527,8 +1527,6 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                 return res.json([]);
             }
 
-            const template = config.overdue_msg;
-
             // Helper function to get value case-insensitive
             const getValue = (obj, key) => {
                 if (obj[key] !== undefined) return obj[key];
@@ -1538,7 +1536,34 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
             };
 
             const messages = clients.map((client) => {
-                let message = template;
+                // Determinar se está vencido ou não
+                const vencimentoStr = getValue(client, 'vencimento') || client.vencimento;
+                let dueDateObj = null;
+                
+                if (vencimentoStr) {
+                    if (vencimentoStr instanceof Date) {
+                        dueDateObj = vencimentoStr;
+                    } else if (typeof vencimentoStr === 'string') {
+                        if (vencimentoStr.includes('/')) {
+                            const parts = vencimentoStr.split('/');
+                            if (parts.length === 3) {
+                                dueDateObj = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                            }
+                        } else if (vencimentoStr.includes('-')) {
+                            dueDateObj = new Date(vencimentoStr);
+                        }
+                    }
+                }
+                
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                if (dueDateObj) dueDateObj.setHours(0, 0, 0, 0);
+                
+                const isOverdue = dueDateObj && dueDateObj < today;
+                const template = isOverdue ? config.overdue_msg : config.reminder_msg;
+                const messageType = isOverdue ? 'overdue' : 'reminder';
+                
+                let message = template || '';
                 Object.keys(fieldMap).forEach(variable => {
                     const dbColumn = fieldMap[variable];
                     let value = getValue(client, dbColumn) || '';
@@ -1550,7 +1575,9 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                         const date = new Date(value);
                         value = date.toLocaleDateString('pt-BR');
                     }
-                    message = message.replace(new RegExp(variable, 'g'), value);
+                    if (message) {
+                        message = message.replace(new RegExp(variable, 'g'), value);
+                    }
                 });
 
                 // --- CALCULATION LOGIC START ---
@@ -1571,31 +1598,22 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
 
                 baseValue = parseFloat(baseValue) || 0;
 
-                // Calculate Days Overdue
+                // Calculate Days Overdue (reutilizando dueDateObj já calculado)
                 let daysOverdue = 0;
-                const vencimentoStr = getValue(client, 'vencimento') || client.vencimento;
-                let dueDateObj = null;
 
-                if (vencimentoStr) {
-                    if (vencimentoStr instanceof Date) {
-                        dueDateObj = vencimentoStr;
-                    } else if (typeof vencimentoStr === 'string') {
-                        if (vencimentoStr.includes('/')) {
-                            const parts = vencimentoStr.split('/'); // DD/MM/YYYY
-                            if (parts.length === 3) {
-                                dueDateObj = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-                            }
-                        } else if (vencimentoStr.includes('-')) {
-                            dueDateObj = new Date(vencimentoStr);
-                        }
-                    }
+                if (dueDateObj) {
+                    const todayCalc = new Date();
+                    todayCalc.setHours(0, 0, 0, 0);
+                    if (dueDateObj.getHours() !== 0) dueDateObj.setHours(0, 0, 0, 0);
+
+                    const diffTime = todayCalc.getTime() - dueDateObj.getTime();
+                    daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                 }
 
+                // Recalcular dueDateObj para cálculo de dias (resetar após uso anterior)
                 if (dueDateObj) {
                     const today = new Date();
                     today.setHours(0, 0, 0, 0);
-                    // Ensure date from SQL is treated as local midnight for accurate day diff
-                    // Or if parsed from string, it's already local logic above.
                     if (dueDateObj.getHours() !== 0) dueDateObj.setHours(0, 0, 0, 0);
 
                     const diffTime = today.getTime() - dueDateObj.getTime();
@@ -1646,7 +1664,7 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                     value: getValue(client, 'valorfinalparcela') || getValue(client, 'valorbrutoparcela') || 0,
                     installmentValue: getValue(client, 'valorfinalparcela') || getValue(client, 'valorbrutoparcela') || 0,
                     messageContent: message,
-                    messageType: 'overdue',
+                    messageType: messageType,
                     status: 'PREVIEW',
                     phone: getValue(client, 'fone1') || '',
                     description: desc
