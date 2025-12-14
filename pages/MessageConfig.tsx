@@ -238,6 +238,7 @@ const MessageConfig: React.FC = () => {
             <strong>{`{valorparcelavencida}`}</strong>: Total corrigido (Base + Juros + Multa) <br />
             <strong>{`{juros}`}</strong>: Valor calculado dos juros <br />
             <strong>{`{multa}`}</strong>: Valor calculado da multa <br />
+            <strong>{`{valortotalcomjuros}`}</strong>: Soma de TODOS os débitos do cliente com juros e multa <br />
             <span className="opacity-75 mt-1 block">Cálculo: <em>Valor Base + (Valor Base * Juros%) + (Valor Base * Multa%)</em></span>
           </p>
         </div>

@@ -146,18 +146,6 @@ app.post('/api/auth/login', (req, res) => {
     });
 });
 
-// List users for login dropdown
-app.get('/api/users/list', (req, res) => {
-    db.all("SELECT id, username, role FROM users WHERE blocked = 0", (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json(rows || []);
-    });
-});
-
-
 // Reset password endpoint
 app.post('/api/auth/reset-password', authMiddleware, (req, res) => {
     const { username } = req.body;
@@ -422,57 +410,16 @@ app.post('/api/query/execute', authMiddleware, async (req, res) => {
     });
 });
 
-// --- Authentication API ---
+// --- Public Authentication API (no auth required) ---
 
-// List all usernames (for login selection)
+// List users for login dropdown
 app.get('/api/users/list', (req, res) => {
-    db.all("SELECT id, username, role FROM users ORDER BY username", (err, rows) => {
+    db.all("SELECT id, username, role FROM users WHERE blocked = 0 ORDER BY username", (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
         }
-        res.json(rows);
-    });
-});
-
-// Login
-app.post('/api/auth/login', (req, res) => {
-    const { username, password } = req.body;
-    db.get("SELECT * FROM users WHERE username = ? AND password = ?", [username, password], (err, row) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (!row) {
-            res.status(401).json({ error: "Credenciais inválidas" });
-            return;
-        }
-        if (row.blocked === 1) {
-            res.status(403).json({ error: "Usuário bloqueado. Entre em contato com o administrador." });
-            return;
-        }
-        // Parse permissions JSON
-        const user = {
-            ...row,
-            permissions: JSON.parse(row.permissions || '[]')
-        };
-        res.json(user);
-    });
-});
-
-// Reset password to default (hiperadm)
-app.post('/api/auth/reset-password', (req, res) => {
-    const { username } = req.body;
-    db.run("UPDATE users SET password = ?, first_login = 1 WHERE username = ?", ['hiperadm', username], function (err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (this.changes === 0) {
-            res.status(404).json({ error: "Usuário não encontrado" });
-            return;
-        }
-        res.json({ message: "Senha resetada para padrão" });
+        res.json(rows || []);
     });
 });
 
@@ -925,7 +872,7 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                 return undefined;
             };
 
-            const generatedMessages = clients.map(client => {
+            const generatedMessages = await Promise.all(clients.map(async (client) => {
                 let message = template;
 
                 // Replace each variable with corresponding database field value
@@ -946,8 +893,8 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                     message = message.replace(new RegExp(variable, 'g'), value);
                 });
 
-                // Calculate and replace {valorparcelavencida}, {juros}, {multa}
-                if (message.includes('{valorparcelavencida}') || message.includes('{juros}') || message.includes('{multa}')) {
+                // Calculate and replace {valorparcelavencida}, {juros}, {multa}, {valortotalcomjuros}
+                if (message.includes('{valorparcelavencida}') || message.includes('{juros}') || message.includes('{multa}') || message.includes('{valortotalcomjuros}')) {
                     const interestRate = config.interest_rate || 0;
                     const penaltyRate = config.penalty_rate || 0;
                     const baseType = config.base_value_type || 'valorbrutoparcela';
@@ -1018,6 +965,33 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                     if (message.includes('{multa}')) {
                         message = message.split('{multa}').join(formattedPenalty);
                     }
+                    if (message.includes('{valortotalcomjuros}')) {
+                        const clientCode = getValue(client, 'codigocliente');
+                        const allInstallments = await pool.request().query(`
+                            SELECT Valor_Final, VENCIMENTO 
+                            FROM FINANCEIRO_CONTA 
+                            WHERE Cliente__Codigo = ${clientCode} 
+                            AND PAGAR_RECEBER = 'R' AND SITUACAO = 'A' AND STATUS <> -1 AND Tipo = 'P'
+                        `);
+                        let totalComJuros = 0;
+                        allInstallments.recordset.forEach(inst => {
+                            const valor = parseFloat(inst.Valor_Final) || 0;
+                            const venc = new Date(inst.VENCIMENTO);
+                            const hoje = new Date();
+                            hoje.setHours(0,0,0,0);
+                            venc.setHours(0,0,0,0);
+                            const diasAtraso = Math.ceil((hoje - venc) / (1000*60*60*24));
+                            if (diasAtraso > 0) {
+                                const juros = valor * ((interestRate / 100) / 30) * diasAtraso;
+                                const multa = valor * (penaltyRate / 100);
+                                totalComJuros += valor + juros + multa;
+                            } else {
+                                totalComJuros += valor;
+                            }
+                        });
+                        const formattedTotalComJuros = totalComJuros.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        message = message.split('{valortotalcomjuros}').join(formattedTotalComJuros);
+                    }
                 }
 
                 // Criar ID único combinando sequência de venda, número da parcela e código do cliente
@@ -1040,7 +1014,7 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                     messageType: messageType,
                     status: 'PREVIEW'
                 };
-            });
+            }));
 
             res.json(generatedMessages);
 
@@ -1123,6 +1097,46 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
             pool = await sql.connect(sqlConfig);
             const today = new Date();
             const { types, startDate, endDate } = req.body; // Extract custom dates
+
+            // Get saved query or use default
+            const savedQuery = await new Promise((resolve, reject) => {
+                db.get("SELECT query_text FROM saved_queries ORDER BY id DESC LIMIT 1", (err, row) => {
+                    if (err) resolve(null);
+                    else resolve(row ? row.query_text : null);
+                });
+            });
+
+            const baseQuery = savedQuery || `
+                SELECT
+                    FC.Cliente__Codigo AS codigocliente,
+                    FC.Parcela_Numero AS numeroparcela,
+                    FC.Sequencia AS sequenciavenda,
+                    C.Nome AS nomecliente,
+                    C.CNPJ AS cpfcliente,
+                    c.fone1 as fone1,
+                    c.fone2 as fone2,
+                    CONVERT(VARCHAR(10), FC.EMISSAO, 103) AS emissao,
+                    CONVERT(VARCHAR(10), FC.VENCIMENTO, 103) AS vencimento,
+                    FC.Valor AS valorbrutoparcela,
+                    FC.Desconto AS desconto,
+                    FC.Juros AS juros,
+                    FC.Multa AS multa,
+                    FC.Valor_Final AS valorfinalparcela,
+                    SUM(FC.Valor_Final) OVER (PARTITION BY FC.Cliente__Codigo) AS valortotaldevido,
+                    SUM(CASE WHEN FC.VENCIMENTO < CAST(GETDATE() AS DATE) THEN FC.Valor_Final ELSE 0 END) OVER (PARTITION BY FC.Cliente__Codigo) AS totalvencido,
+                    FC.Descricao AS descricaoparcela
+                FROM FINANCEIRO_CONTA FC
+                LEFT JOIN Cli_For C ON FC.Cliente__Codigo = C.Codigo
+                WHERE FC.PAGAR_RECEBER = 'R'
+                  AND FC.SITUACAO = 'A'
+                  AND FC.STATUS <> -1
+                  AND FC.Cliente__Codigo <> 1
+                  AND FC.Tipo = 'P'
+            `;
+
+            let cleanBaseQuery = baseQuery.trim();
+            cleanBaseQuery = cleanBaseQuery.replace(/;+\s*$/g, '');
+            cleanBaseQuery = cleanBaseQuery.replace(/ORDER\s+BY\s+[\w\.,\s]+$/i, '');
 
             // Helper to format date for SQL
             const formatDate = (date) => date.toISOString().split('T')[0];
@@ -2507,26 +2521,6 @@ app.get('/api/logs', authMiddleware, (req, res) => {
     });
 });
 
-// Toggle item selection
-app.put('/api/queue/items/:id/select', (req, res) => {
-    const { id } = req.params;
-    const { selected } = req.body;
-
-    db.run(
-        "UPDATE queue_items SET selected_for_send = ? WHERE id = ?",
-        [selected ? 1 : 0, id],
-        function (err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            res.json({ message: "Selection updated", changes: this.changes });
-        }
-    );
-});
-
-
-
 // Delete error logs
 app.delete('/api/logs', authMiddleware, (req, res) => {
     const { ids, all } = req.body;
@@ -2618,17 +2612,6 @@ app.delete('/api/logs/duplicates', authMiddleware, (req, res) => {
     } else {
         res.status(400).json({ error: "IDs ou flag 'all' necessários" });
     }
-});
-
-// Get error logs
-app.get('/api/logs', (req, res) => {
-    db.all("SELECT * FROM error_logs ORDER BY data_hora DESC LIMIT 100", (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json(rows || []);
-    });
 });
 
 // Get log cleanup configuration
