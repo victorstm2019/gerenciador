@@ -82,6 +82,30 @@ db.serialize(() => {
         db.run("ALTER TABLE message_config ADD COLUMN base_value_type TEXT DEFAULT 'valorbrutoparcela'");
         console.log("Added base_value_type column to message_config");
       }
+      if (!columnNames.includes('delay_between_messages')) {
+        db.run("ALTER TABLE message_config ADD COLUMN delay_between_messages INTEGER DEFAULT 3");
+        console.log("Added delay_between_messages column to message_config");
+      }
+      if (!columnNames.includes('batch_size')) {
+        db.run("ALTER TABLE message_config ADD COLUMN batch_size INTEGER DEFAULT 15");
+        console.log("Added batch_size column to message_config");
+      }
+      if (!columnNames.includes('batch_delay')) {
+        db.run("ALTER TABLE message_config ADD COLUMN batch_delay INTEGER DEFAULT 60");
+        console.log("Added batch_delay column to message_config");
+      }
+      if (!columnNames.includes('max_retries')) {
+        db.run("ALTER TABLE message_config ADD COLUMN max_retries INTEGER DEFAULT 3");
+        console.log("Added max_retries column to message_config");
+      }
+      if (!columnNames.includes('retry_delay')) {
+        db.run("ALTER TABLE message_config ADD COLUMN retry_delay INTEGER DEFAULT 30");
+        console.log("Added retry_delay column to message_config");
+      }
+      if (!columnNames.includes('max_messages_per_hour')) {
+        db.run("ALTER TABLE message_config ADD COLUMN max_messages_per_hour INTEGER DEFAULT 100");
+        console.log("Added max_messages_per_hour column to message_config");
+      }
     }
   });
 
@@ -148,6 +172,14 @@ db.serialize(() => {
       if (!columnNames.includes('repeat_number')) {
         db.run("ALTER TABLE queue_items ADD COLUMN repeat_number INTEGER DEFAULT 0");
         console.log("Added repeat_number column to queue_items");
+      }
+      if (!columnNames.includes('retry_count')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN retry_count INTEGER DEFAULT 0");
+        console.log("Added retry_count column to queue_items");
+      }
+      if (!columnNames.includes('last_retry_at')) {
+        db.run("ALTER TABLE queue_items ADD COLUMN last_retry_at DATETIME");
+        console.log("Added last_retry_at column to queue_items");
       }
     }
   });

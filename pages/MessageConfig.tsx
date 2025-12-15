@@ -27,6 +27,14 @@ const MessageConfig: React.FC = () => {
   const [penaltyRate, setPenaltyRate] = useState(0);
   const [baseValueType, setBaseValueType] = useState('valorbrutoparcela');
 
+  // Send Control Fields
+  const [delayBetweenMessages, setDelayBetweenMessages] = useState(3);
+  const [batchSize, setBatchSize] = useState(15);
+  const [batchDelay, setBatchDelay] = useState(60);
+  const [maxRetries, setMaxRetries] = useState(3);
+  const [retryDelay, setRetryDelay] = useState(30);
+  const [maxMessagesPerHour, setMaxMessagesPerHour] = useState(100);
+
   const [isLoading, setIsLoading] = useState(false);
 
   // Field Mappings State
@@ -64,6 +72,13 @@ const MessageConfig: React.FC = () => {
           setInterestRate(configData.interest_rate ?? 0);
           setPenaltyRate(configData.penalty_rate ?? 0);
           setBaseValueType(configData.base_value_type || 'valorbrutoparcela');
+
+          setDelayBetweenMessages(configData.delay_between_messages ?? 3);
+          setBatchSize(configData.batch_size ?? 15);
+          setBatchDelay(configData.batch_delay ?? 60);
+          setMaxRetries(configData.max_retries ?? 3);
+          setRetryDelay(configData.retry_delay ?? 30);
+          setMaxMessagesPerHour(configData.max_messages_per_hour ?? 100);
         }
         if (mappingsData) {
           const filteredMappings = mappingsData.filter(m =>
@@ -97,7 +112,13 @@ const MessageConfig: React.FC = () => {
       overdue_repeat_interval_days: overdueRepeatInterval,
       interest_rate: interestRate,
       penalty_rate: penaltyRate,
-      base_value_type: baseValueType
+      base_value_type: baseValueType,
+      delay_between_messages: delayBetweenMessages,
+      batch_size: batchSize,
+      batch_delay: batchDelay,
+      max_retries: maxRetries,
+      retry_delay: retryDelay,
+      max_messages_per_hour: maxMessagesPerHour
     })
       .then(() => {
         setIsLoading(false);
@@ -185,6 +206,106 @@ const MessageConfig: React.FC = () => {
             </p>
           </div>
         )}
+      </div>
+
+      {/* Send Control Config */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
+          <span className="material-symbols-outlined">settings</span>
+          Controle de Envio
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Delay entre mensagens (segundos)
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="60"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              value={delayBetweenMessages}
+              onChange={(e) => setDelayBetweenMessages(parseInt(e.target.value))}
+            />
+            <p className="text-xs text-gray-500 mt-1">Pausa entre cada envio</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Tamanho do lote
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              value={batchSize}
+              onChange={(e) => setBatchSize(parseInt(e.target.value))}
+            />
+            <p className="text-xs text-gray-500 mt-1">Mensagens por lote</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Pausa entre lotes (segundos)
+            </label>
+            <input
+              type="number"
+              min="10"
+              max="300"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              value={batchDelay}
+              onChange={(e) => setBatchDelay(parseInt(e.target.value))}
+            />
+            <p className="text-xs text-gray-500 mt-1">Intervalo entre lotes</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Máximo de tentativas
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="5"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              value={maxRetries}
+              onChange={(e) => setMaxRetries(parseInt(e.target.value))}
+            />
+            <p className="text-xs text-gray-500 mt-1">Tentativas em caso de erro</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Delay entre tentativas (segundos)
+            </label>
+            <input
+              type="number"
+              min="10"
+              max="300"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              value={retryDelay}
+              onChange={(e) => setRetryDelay(parseInt(e.target.value))}
+            />
+            <p className="text-xs text-gray-500 mt-1">Aguardar antes de retentar</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Limite por hora
+            </label>
+            <input
+              type="number"
+              min="10"
+              max="1000"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              value={maxMessagesPerHour}
+              onChange={(e) => setMaxMessagesPerHour(parseInt(e.target.value))}
+            />
+            <p className="text-xs text-gray-500 mt-1">Máximo de mensagens/hora</p>
+          </div>
+        </div>
+        <div className="mt-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-3">
+          <p className="text-xs text-blue-800 dark:text-blue-300">
+            💡 <strong>Exemplo:</strong> Com {batchSize} mensagens por lote, delay de {delayBetweenMessages}s entre mensagens e {batchDelay}s entre lotes, 
+            cada lote levará aproximadamente {Math.ceil((batchSize * delayBetweenMessages) / 60)} minuto(s) + {Math.ceil(batchDelay / 60)} minuto(s) de pausa.
+          </p>
+        </div>
       </div>
 
       {/* Calculation Config */}

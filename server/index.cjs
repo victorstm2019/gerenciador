@@ -208,7 +208,13 @@ app.post('/api/config', authMiddleware, (req, res) => {
         overdue_repeat_interval_days,
         interest_rate,
         penalty_rate,
-        base_value_type
+        base_value_type,
+        delay_between_messages,
+        batch_size,
+        batch_delay,
+        max_retries,
+        retry_delay,
+        max_messages_per_hour
     } = req.body;
 
     // We assume there's always one row with ID 1 (created in db.js)
@@ -228,7 +234,13 @@ app.post('/api/config', authMiddleware, (req, res) => {
     overdue_repeat_interval_days = ?,
     interest_rate = ?,
     penalty_rate = ?,
-    base_value_type = ?
+    base_value_type = ?,
+    delay_between_messages = ?,
+    batch_size = ?,
+    batch_delay = ?,
+    max_retries = ?,
+    retry_delay = ?,
+    max_messages_per_hour = ?
     WHERE id = 1`;
 
     db.run(sqlQuery, [
@@ -247,7 +259,13 @@ app.post('/api/config', authMiddleware, (req, res) => {
         overdue_repeat_interval_days,
         interest_rate,
         penalty_rate,
-        base_value_type
+        base_value_type,
+        delay_between_messages,
+        batch_size,
+        batch_delay,
+        max_retries,
+        retry_delay,
+        max_messages_per_hour
     ], function (err) {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -2361,8 +2379,173 @@ function logEvent(tipo, mensagem, detalhes = '') {
     );
 }
 
-// Send selected items
+// Send selected items with improved logic
 app.post('/api/queue/send-selected', authMiddleware, async (req, res) => {
+    const startTime = Date.now();
+    
+    try {
+        // Get config
+        const config = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM message_config LIMIT 1", (err, row) => {
+                if (err) reject(err);
+                else resolve(row || {});
+            });
+        });
+
+        const delayBetweenMessages = (config.delay_between_messages || 3) * 1000;
+        const batchSize = config.batch_size || 15;
+        const batchDelay = (config.batch_delay || 60) * 1000;
+        const maxRetries = config.max_retries || 3;
+        const retryDelay = (config.retry_delay || 30) * 1000;
+        const maxMessagesPerHour = config.max_messages_per_hour || 100;
+
+        // Get selected items
+        const items = await new Promise((resolve, reject) => {
+            db.all(
+                "SELECT * FROM queue_items WHERE selected_for_send = 1 AND status = 'PENDING' ORDER BY id",
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                }
+            );
+        });
+
+        if (items.length === 0) {
+            return res.status(400).json({ error: "Nenhum item selecionado" });
+        }
+
+        // Check rate limit
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const sentLastHour = await new Promise((resolve, reject) => {
+            db.get(
+                "SELECT COUNT(*) as count FROM queue_items WHERE status = 'SENT' AND sent_date >= ?",
+                [oneHourAgo],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row.count || 0);
+                }
+            );
+        });
+
+        if (sentLastHour >= maxMessagesPerHour) {
+            return res.status(429).json({ 
+                error: `Limite de ${maxMessagesPerHour} mensagens por hora atingido. Aguarde antes de enviar mais.`,
+                sentLastHour,
+                maxMessagesPerHour
+            });
+        }
+
+        const availableSlots = maxMessagesPerHour - sentLastHour;
+        const itemsToSend = items.slice(0, availableSlots);
+
+        // Start sending in background
+        res.json({
+            message: "Envio iniciado",
+            total: itemsToSend.length,
+            batches: Math.ceil(itemsToSend.length / batchSize),
+            estimatedTime: Math.ceil((itemsToSend.length * delayBetweenMessages + Math.ceil(itemsToSend.length / batchSize) * batchDelay) / 1000 / 60)
+        });
+
+        // Process in background
+        setImmediate(async () => {
+            let sent = 0;
+            let errors = 0;
+            let batchCount = 0;
+
+            for (let i = 0; i < itemsToSend.length; i++) {
+                const item = itemsToSend[i];
+                let success = false;
+                let lastError = null;
+
+                // Update status to PROCESSING
+                await new Promise((resolve) => {
+                    db.run(
+                        "UPDATE queue_items SET status = 'PROCESSING' WHERE id = ?",
+                        [item.id],
+                        () => resolve()
+                    );
+                });
+
+                // Retry logic
+                for (let attempt = 0; attempt <= maxRetries && !success; attempt++) {
+                    try {
+                        if (!item.phone) {
+                            throw new Error("Telefone não disponível");
+                        }
+
+                        await sendMessageViaWAPI(item.phone, item.message_content);
+                        success = true;
+
+                        // Update to SENT
+                        await new Promise((resolve) => {
+                            db.run(
+                                "UPDATE queue_items SET status = 'SENT', sent_date = CURRENT_TIMESTAMP, retry_count = ? WHERE id = ?",
+                                [attempt, item.id],
+                                () => resolve()
+                            );
+                        });
+
+                        logEvent('INFO', `Mensagem enviada: ${item.client_name}`, `Cliente: ${item.client_code}, Tentativa: ${attempt + 1}`);
+                        sent++;
+
+                    } catch (error) {
+                        lastError = error.message;
+                        
+                        if (attempt < maxRetries) {
+                            // Update retry info
+                            await new Promise((resolve) => {
+                                db.run(
+                                    "UPDATE queue_items SET retry_count = ?, last_retry_at = CURRENT_TIMESTAMP WHERE id = ?",
+                                    [attempt + 1, item.id],
+                                    () => resolve()
+                                );
+                            });
+
+                            logEvent('INFO', `Tentativa ${attempt + 1} falhou: ${item.client_name}`, error.message);
+                            await new Promise(resolve => setTimeout(resolve, retryDelay));
+                        }
+                    }
+                }
+
+                // If all retries failed
+                if (!success) {
+                    await new Promise((resolve) => {
+                        db.run(
+                            "UPDATE queue_items SET status = 'ERROR', error_date = CURRENT_TIMESTAMP, error_message = ?, retry_count = ? WHERE id = ?",
+                            [lastError, maxRetries, item.id],
+                            () => resolve()
+                        );
+                    });
+
+                    logError('ERRO', `Falha no envio: ${item.client_name}`, lastError, item.client_code, item.phone);
+                    errors++;
+                }
+
+                // Delay between messages
+                if (i < itemsToSend.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, delayBetweenMessages));
+                }
+
+                // Batch delay
+                if ((i + 1) % batchSize === 0 && i < itemsToSend.length - 1) {
+                    batchCount++;
+                    logEvent('INFO', `Lote ${batchCount} concluído`, `${sent} enviadas, ${errors} erros. Aguardando ${batchDelay / 1000}s...`);
+                    await new Promise(resolve => setTimeout(resolve, batchDelay));
+                }
+            }
+
+            const totalTime = Math.ceil((Date.now() - startTime) / 1000);
+            logEvent('INFO', `Envio concluído em ${totalTime}s`, `${sent} enviadas, ${errors} erros de ${itemsToSend.length} total`);
+        });
+
+    } catch (error) {
+        console.error("Error in send-selected:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Legacy send selected (keeping for compatibility)
+app.post('/api/queue/send-selected-legacy', authMiddleware, async (req, res) => {
     try {
         // Get selected items
         const items = await new Promise((resolve, reject) => {
@@ -2525,6 +2708,51 @@ app.post('/api/queue/send-auto', authMiddleware, async (req, res) => {
         console.error("Error sending auto items:", error);
         res.status(500).json({ error: error.message });
     }
+});
+
+// Get send progress (real-time monitoring)
+app.get('/api/queue/send-progress', authMiddleware, (req, res) => {
+    const today = new Date().toISOString().split('T')[0];
+    const query = `
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN status = 'PROCESSING' THEN 1 ELSE 0 END) as processing,
+            SUM(CASE WHEN status = 'SENT' THEN 1 ELSE 0 END) as sent,
+            SUM(CASE WHEN status = 'ERROR' THEN 1 ELSE 0 END) as error
+        FROM queue_items
+        WHERE selected_for_send = 1
+        AND DATE(created_at) = DATE('${today}')
+    `;
+
+    db.get(query, (err, row) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+
+        // Get recent activity (last 10 items from today)
+        db.all(
+            `SELECT client_name, status, sent_date, error_message, retry_count 
+             FROM queue_items 
+             WHERE selected_for_send = 1 
+             AND (status = 'SENT' OR status = 'ERROR' OR status = 'PROCESSING')
+             AND DATE(created_at) = DATE('${today}')
+             ORDER BY COALESCE(sent_date, error_date, created_at) DESC 
+             LIMIT 10`,
+            (err, recentItems) => {
+                if (err) {
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+
+                res.json({
+                    ...row,
+                    recentActivity: recentItems || []
+                });
+            }
+        );
+    });
 });
 
 // Get error logs

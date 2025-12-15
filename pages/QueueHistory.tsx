@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { formatPhoneDisplay } from '../utils/phoneFormatter';
+import { SendProgressMonitor } from '../utils/SendProgressMonitor';
 
 interface QueueItem {
     id: string;
@@ -553,6 +554,8 @@ const QueueHistory: React.FC = () => {
     }
 
     return (
+        <>
+        <SendProgressMonitor />
         <div className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 {/* Queue List */}
@@ -1419,6 +1422,7 @@ const QueueHistory: React.FC = () => {
                 </div>
             )}
         </div>
+        </>
     );
 };
 
