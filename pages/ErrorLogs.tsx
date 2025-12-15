@@ -113,8 +113,7 @@ const ErrorLogs: React.FC = () => {
     if (!confirm('Tem certeza que deseja excluir os logs selecionados?')) return;
 
     api.delete('/api/logs/duplicates', {
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, all })
+      body: { ids, all }
     })
       .then(() => {
         fetchDuplicateLogs();
@@ -156,8 +155,7 @@ const ErrorLogs: React.FC = () => {
     if (!confirm('Tem certeza que deseja excluir os logs selecionados?')) return;
 
     api.delete('/api/logs', {
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, all })
+      body: { ids, all }
     })
       .then(() => {
         fetchLogs();

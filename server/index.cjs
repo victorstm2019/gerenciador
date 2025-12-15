@@ -1223,7 +1223,7 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
 
                     const template = type === 'reminder' ? config.reminder_msg : config.overdue_msg;
 
-                    const messages = clients.map((client, idx) => {
+                    const messages = await Promise.all(clients.map(async (client, idx) => {
                         let message = template || '';
                         Object.keys(fieldMap).forEach(variable => {
                             const dbColumn = fieldMap[variable];
@@ -1324,10 +1324,33 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
                         if (message.includes('{multa}')) {
                             message = message.split('{multa}').join(formattedPenalty);
                         }
-
-
-
-
+                        if (message.includes('{valortotalcomjuros}')) {
+                            const clientCode = getValue(client, 'codigocliente');
+                            const allInstallments = await pool.request().query(`
+                                SELECT Valor_Final, VENCIMENTO 
+                                FROM FINANCEIRO_CONTA 
+                                WHERE Cliente__Codigo = ${clientCode} 
+                                AND PAGAR_RECEBER = 'R' AND SITUACAO = 'A' AND STATUS <> -1 AND Tipo = 'P'
+                            `);
+                            let totalComJuros = 0;
+                            allInstallments.recordset.forEach(inst => {
+                                const valor = parseFloat(inst.Valor_Final) || 0;
+                                const venc = new Date(inst.VENCIMENTO);
+                                const hoje = new Date();
+                                hoje.setHours(0,0,0,0);
+                                venc.setHours(0,0,0,0);
+                                const diasAtraso = Math.ceil((hoje - venc) / (1000*60*60*24));
+                                if (diasAtraso > 0) {
+                                    const juros = valor * ((interestRate / 100) / 30) * diasAtraso;
+                                    const multa = valor * (penaltyRate / 100);
+                                    totalComJuros += valor + juros + multa;
+                                } else {
+                                    totalComJuros += valor;
+                                }
+                            });
+                            const formattedTotalComJuros = totalComJuros.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            message = message.split('{valortotalcomjuros}').join(formattedTotalComJuros);
+                        }
 
                         const desc = getValue(client, 'descricaoparcela') || '';
 
@@ -1364,7 +1387,7 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
                             phone: formattedPhone,
                             description: desc
                         };
-                    });
+                    }));
                     allMessages = [...allMessages, ...messages];
                 }
             }
@@ -1549,7 +1572,7 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                 return foundKey ? obj[foundKey] : undefined;
             };
 
-            const messages = clients.map((client) => {
+            const messages = await Promise.all(clients.map(async (client) => {
                 // Determinar se está vencido ou não
                 const vencimentoStr = getValue(client, 'vencimento') || client.vencimento;
                 let dueDateObj = null;
@@ -1659,6 +1682,33 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                 if (message.includes('{multa}')) {
                     message = message.split('{multa}').join(formattedPenalty);
                 }
+                if (message.includes('{valortotalcomjuros}')) {
+                    const clientCode = getValue(client, 'codigocliente');
+                    const allInstallments = await pool.request().query(`
+                        SELECT Valor_Final, VENCIMENTO 
+                        FROM FINANCEIRO_CONTA 
+                        WHERE Cliente__Codigo = ${clientCode} 
+                        AND PAGAR_RECEBER = 'R' AND SITUACAO = 'A' AND STATUS <> -1 AND Tipo = 'P'
+                    `);
+                    let totalComJuros = 0;
+                    allInstallments.recordset.forEach(inst => {
+                        const valor = parseFloat(inst.Valor_Final) || 0;
+                        const venc = new Date(inst.VENCIMENTO);
+                        const hoje = new Date();
+                        hoje.setHours(0,0,0,0);
+                        venc.setHours(0,0,0,0);
+                        const diasAtraso = Math.ceil((hoje - venc) / (1000*60*60*24));
+                        if (diasAtraso > 0) {
+                            const juros = valor * ((interestRate / 100) / 30) * diasAtraso;
+                            const multa = valor * (penaltyRate / 100);
+                            totalComJuros += valor + juros + multa;
+                        } else {
+                            totalComJuros += valor;
+                        }
+                    });
+                    const formattedTotalComJuros = totalComJuros.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    message = message.split('{valortotalcomjuros}').join(formattedTotalComJuros);
+                }
                 // --- CALCULATION LOGIC END ---
 
                 const desc = getValue(client, 'descricaoparcela') || '';
@@ -1683,7 +1733,7 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                     phone: getValue(client, 'fone1') || '',
                     description: desc
                 };
-            });
+            }));
 
             console.log(`[generate-by-date] Geradas ${messages.length} mensagens com sucesso`);
             console.log('[generate-by-date] Exemplo de mensagem gerada:', messages[0]);
