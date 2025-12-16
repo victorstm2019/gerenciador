@@ -259,13 +259,13 @@ const QueueHistory: React.FC = () => {
             )
         )
             .then(() => {
-                return api.post<{ sent: number, errors: number }>('/api/queue/send-selected', {});
+                return api.post('/api/queue/send-selected', {});
             })
-            .then(result => {
+            .then(() => {
                 setSending(false);
                 setSelectedItems(new Set());
                 setSelectAll(false);
-                alert(`Enviado: ${result.sent} mensagens\nErros: ${result.errors}`);
+                alert('Lote processado.');
                 fetchData();
             })
             .catch(err => {
@@ -1059,7 +1059,7 @@ const QueueHistory: React.FC = () => {
             {/* Message View Modal */}
             {showMessageModal && selectedMessage && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-xl w-full">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
                         <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
                             <h3 className="text-xl font-bold text-gray-800 dark:text-white">Mensagem - {selectedMessage.clientName}</h3>
                             <button

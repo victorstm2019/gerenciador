@@ -38,7 +38,9 @@ export const SendProgressMonitor: React.FC = () => {
                     setIsVisible(true);
                 }
             } catch (err) {
-                // Silently ignore errors
+                // Silently ignore connection errors
+                if (!mounted) return;
+                setProgress(null);
             }
         };
 
