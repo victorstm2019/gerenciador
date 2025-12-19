@@ -1,14 +1,19 @@
 {
-  "name": "gerenciador-de-cobranças",
+  "name": "gerenciador-cobrancas",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "main": "main.cjs",
+  "bin": "server/index.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "server": "node server/index.cjs",
-    "dev:full": "node dev-full.cjs"
+    "dev:full": "node dev-full.cjs",
+    "build:exe": "node build-electron-final.cjs",
+    "electron": "electron .",
+    "dist": "npm run build && electron-builder --win portable"
   },
   "dependencies": {
     "body-parser": "^2.2.1",
@@ -20,12 +25,40 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.9.6",
-    "sqlite3": "^5.1.7"
+    "sql.js": "^1.12.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "pkg": "^5.8.1",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "electron": "^32.2.6",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.gerenciador.cobrancas",
+    "productName": "Gerenciador",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "server/**/*",
+      "dist/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      "!**/*.ts",
+      "!**/*.tsx",
+      "!vite.config.ts"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "assets/icon.png"
+    },
+    "portable": {
+      "artifactName": "Gerenciador.exe",
+      "requestExecutionLevel": "admin"
+    }
   }
 }

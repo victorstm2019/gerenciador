@@ -104,7 +104,7 @@ const ErrorLogs: React.FC = () => {
   };
 
   const updateCleanupConfig = (logType: string, field: 'retention_days' | 'enabled', value: number) => {
-    setCleanupConfigs(prev => prev.map(config => 
+    setCleanupConfigs(prev => prev.map(config =>
       config.log_type === logType ? { ...config, [field]: value } : config
     ));
   };
@@ -292,71 +292,71 @@ const ErrorLogs: React.FC = () => {
               />
             </div>
 
-          {activeTab === 'system' && (
-            <div className="w-full lg:w-48">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo</label>
-              <select
-                className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value)}
-              >
-                <option value="">Todos</option>
-                <option value="ERRO">Erro</option>
-                <option value="AGENDAMENTO">Agendamento</option>
-                <option value="INFO">Informativo</option>
-              </select>
-            </div>
-          )}
+            {activeTab === 'system' && (
+              <div className="w-full lg:w-48">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Tipo</label>
+                <select
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                >
+                  <option value="">Todos</option>
+                  <option value="ERRO">Erro</option>
+                  <option value="AGENDAMENTO">Agendamento</option>
+                  <option value="INFO">Informativo</option>
+                </select>
+              </div>
+            )}
 
-          {activeTab === 'system' && (
-            <div className="flex items-end gap-2 ml-auto">
-              <button
-                onClick={() => deleteSystemLogs(selectedLogs)}
-                disabled={selectedLogs.length === 0}
-                className="h-10 px-4 bg-red-100 text-red-700 rounded-md hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-              >
-                Excluir Selecionados ({selectedLogs.length})
-              </button>
-              <button
-                onClick={() => deleteSystemLogs([], true)}
-                className="h-10 px-4 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm font-medium"
-              >
-                Limpar Todos
-              </button>
-              <button
-                onClick={fetchLogs}
-                className="h-10 px-3 text-gray-500 hover:text-blue-600 transition-colors rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
-                title="Atualizar"
-              >
-                <span className="material-symbols-outlined">refresh</span>
-              </button>
-            </div>
-          )}
+            {activeTab === 'system' && (
+              <div className="flex items-end gap-2 ml-auto">
+                <button
+                  onClick={() => deleteSystemLogs(selectedLogs)}
+                  disabled={selectedLogs.length === 0}
+                  className="h-10 px-4 bg-red-100 text-red-700 rounded-md hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                >
+                  Excluir Selecionados ({selectedLogs.length})
+                </button>
+                <button
+                  onClick={() => deleteSystemLogs([], true)}
+                  className="h-10 px-4 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm font-medium"
+                >
+                  Limpar Todos
+                </button>
+                <button
+                  onClick={fetchLogs}
+                  className="h-10 px-3 text-gray-500 hover:text-blue-600 transition-colors rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+                  title="Atualizar"
+                >
+                  <span className="material-symbols-outlined">refresh</span>
+                </button>
+              </div>
+            )}
 
-          {activeTab === 'duplicates' && (
-            <div className="flex items-end gap-2 ml-auto">
-              <button
-                onClick={() => deleteDuplicateLogs(selectedDuplicates)}
-                disabled={selectedDuplicates.length === 0}
-                className="h-10 px-4 bg-red-100 text-red-700 rounded-md hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-              >
-                Excluir Selecionados ({selectedDuplicates.length})
-              </button>
-              <button
-                onClick={() => deleteDuplicateLogs([], true)}
-                className="h-10 px-4 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm font-medium"
-              >
-                Limpar Todos
-              </button>
-              <button
-                onClick={fetchDuplicateLogs}
-                className="h-10 px-3 text-gray-500 hover:text-blue-600 transition-colors rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
-                title="Atualizar"
-              >
-                <span className="material-symbols-outlined">refresh</span>
-              </button>
-            </div>
-          )}
+            {activeTab === 'duplicates' && (
+              <div className="flex items-end gap-2 ml-auto">
+                <button
+                  onClick={() => deleteDuplicateLogs(selectedDuplicates)}
+                  disabled={selectedDuplicates.length === 0}
+                  className="h-10 px-4 bg-red-100 text-red-700 rounded-md hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                >
+                  Excluir Selecionados ({selectedDuplicates.length})
+                </button>
+                <button
+                  onClick={() => deleteDuplicateLogs([], true)}
+                  className="h-10 px-4 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm font-medium"
+                >
+                  Limpar Todos
+                </button>
+                <button
+                  onClick={fetchDuplicateLogs}
+                  className="h-10 px-3 text-gray-500 hover:text-blue-600 transition-colors rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
+                  title="Atualizar"
+                >
+                  <span className="material-symbols-outlined">refresh</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -388,37 +388,37 @@ const ErrorLogs: React.FC = () => {
               ) : (
                 <div className="space-y-4">
                   {cleanupConfigs.map(config => (
-                  <div key={config.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <div className="flex items-center space-x-4 flex-1">
-                      <input
-                        type="checkbox"
-                        checked={config.enabled === 1}
-                        onChange={(e) => updateCleanupConfig(config.log_type, 'enabled', e.target.checked ? 1 : 0)}
-                        className="w-5 h-5 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <div className="flex-1">
-                        <label className="font-medium text-gray-900 dark:text-white">
-                          {config.log_type === 'DUPLICATAS' ? 'Logs de Duplicatas' : 
-                           config.log_type === 'ERRO' ? 'Logs de Erro' :
-                           config.log_type === 'AGENDAMENTO' ? 'Logs de Agendamento' :
-                           config.log_type === 'INFO' ? 'Logs Informativos' : config.log_type}
-                        </label>
+                    <div key={config.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                      <div className="flex items-center space-x-4 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={config.enabled === 1}
+                          onChange={(e) => updateCleanupConfig(config.log_type, 'enabled', e.target.checked ? 1 : 0)}
+                          className="w-5 h-5 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <div className="flex-1">
+                          <label className="font-medium text-gray-900 dark:text-white">
+                            {config.log_type === 'DUPLICATAS' ? 'Logs de Duplicatas' :
+                              config.log_type === 'ERRO' ? 'Logs de Erro' :
+                                config.log_type === 'AGENDAMENTO' ? 'Logs de Agendamento' :
+                                  config.log_type === 'INFO' ? 'Logs Informativos' : config.log_type}
+                          </label>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <label className="text-sm text-gray-600 dark:text-gray-400">Manter por</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="365"
+                          value={config.retention_days}
+                          onChange={(e) => updateCleanupConfig(config.log_type, 'retention_days', parseInt(e.target.value) || 15)}
+                          className="w-20 px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-600 dark:border-gray-500 dark:text-white text-center"
+                          disabled={config.enabled === 0}
+                        />
+                        <label className="text-sm text-gray-600 dark:text-gray-400">dias</label>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <label className="text-sm text-gray-600 dark:text-gray-400">Manter por</label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="365"
-                        value={config.retention_days}
-                        onChange={(e) => updateCleanupConfig(config.log_type, 'retention_days', parseInt(e.target.value) || 15)}
-                        className="w-20 px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-600 dark:border-gray-500 dark:text-white text-center"
-                        disabled={config.enabled === 0}
-                      />
-                      <label className="text-sm text-gray-600 dark:text-gray-400">dias</label>
-                    </div>
-                  </div>
                   ))}
                 </div>
               )}
@@ -462,7 +462,7 @@ const ErrorLogs: React.FC = () => {
                       />
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-gray-500 dark:text-gray-400">
-                      {new Date(log.data_hora + 'Z').toLocaleString('pt-BR')}
+                      {new Date(log.data_hora).toLocaleString('pt-BR')}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 rounded text-xs uppercase font-bold ${log.tipo === 'ERRO' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
@@ -523,7 +523,7 @@ const ErrorLogs: React.FC = () => {
                       />
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-gray-500 dark:text-gray-400">
-                      {new Date(log.created_at + 'Z').toLocaleString('pt-BR')}
+                      {new Date(log.created_at).toLocaleString('pt-BR')}
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
                       <div>{log.client_name}</div>

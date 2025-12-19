@@ -1,5 +1,6 @@
 const express = require('express');
 const https = require('https');
+const path = require('path');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const db = require('./db.cjs');
@@ -13,7 +14,14 @@ const insecureAgent = new https.Agent({
 });
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
+
+process.on('uncaughtException', (err) => {
+    console.error('[CRASH] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[CRASH] Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 // Session storage (in-memory)
 const activeSessions = new Map(); // Map<token, { userId, username, createdAt }>
@@ -30,6 +38,17 @@ activeSessions.set(SYSTEM_TOKEN, {
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' })); // Aumentado de 100kb (padrão) para 50mb
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+
+// Serve static files from the React app
+const isPkg = typeof process.pkg !== 'undefined';
+const baseDir = isPkg ? path.dirname(process.execPath) : __dirname;
+// Try external dist first, then fallback to relative dist (snapshot or local dev)
+const distPath = isPkg && !path.join(baseDir, 'dist').startsWith('/snapshot')
+    ? path.join(baseDir, 'dist')
+    : path.join(__dirname, '../dist');
+
+console.log('Static files path:', distPath);
+app.use(express.static(distPath));
 
 // Authentication Middleware
 const authMiddleware = (req, res, next) => {
@@ -109,15 +128,18 @@ app.post('/api/auth/login', (req, res) => {
     }
 
     db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
 
-        // In a real app, use hashed passwords (bcrypt). Here it seems plaintext based on logs.
+        if (!user) {
+            return res.status(401).json({ error: 'Usuário não encontrado' });
+        }
+
         if (user.password !== password) {
             return res.status(401).json({ error: 'Senha incorreta' });
         }
 
-        // Generate token
         const token = crypto.randomUUID();
         activeSessions.set(token, {
             userId: user.id,
@@ -126,8 +148,6 @@ app.post('/api/auth/login', (req, res) => {
             createdAt: new Date()
         });
 
-        // Return user info + token
-        // Permissions is JSON string in DB
         let permissions = [];
         try {
             permissions = JSON.parse(user.permissions || '[]');
@@ -154,8 +174,7 @@ app.post('/api/auth/reset-password', authMiddleware, (req, res) => {
         return res.status(400).json({ error: 'Nome de usuário é obrigatório' });
     }
 
-    // Reset to default password (same as username)
-    db.run("UPDATE users SET password = ?, first_login = 1 WHERE username = ?", [username, username], function (err) {
+    db.run("UPDATE users SET password = ?, first_login = 1 WHERE username = ?", ['hiperadm', username], function (err) {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
@@ -183,10 +202,9 @@ app.post('/api/auth/logout', authMiddleware, (req, res) => {
 app.get('/api/config', authMiddleware, (req, res) => {
     db.get("SELECT * FROM message_config LIMIT 1", (err, row) => {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
-        res.json(row);
+        res.json(row || {});
     });
 });
 
@@ -268,8 +286,7 @@ app.post('/api/config', authMiddleware, (req, res) => {
         max_messages_per_hour
     ], function (err) {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         res.json({ message: "Configuração atualizada com sucesso", changes: this.changes });
     });
@@ -281,13 +298,9 @@ app.post('/api/config', authMiddleware, (req, res) => {
 app.get('/api/connection', authMiddleware, (req, res) => {
     db.get("SELECT * FROM db_connections ORDER BY id DESC LIMIT 1", (err, row) => {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         if (row) {
-            // Don't send password back for security, or send a placeholder
-            // For now, sending it as is because the frontend might need it to show "configured" state
-            // or we can just send "configured: true"
             res.json(row);
         } else {
             res.json({});
@@ -299,33 +312,25 @@ app.get('/api/connection', authMiddleware, (req, res) => {
 app.post('/api/connection', authMiddleware, (req, res) => {
     const { host, user, password, database } = req.body;
 
-    // Check if config exists
     db.get("SELECT id FROM db_connections LIMIT 1", (err, row) => {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
 
         if (row) {
-            // Update existing config
-            db.run("UPDATE db_connections SET host = ?, user = ?, password = ?, database = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                [host, user, password, database, row.id], function (err) {
-                    if (err) {
-                        res.status(500).json({ error: err.message });
-                        return;
-                    }
-                    res.json({ message: "Configuração de banco de dados atualizada" });
-                });
+            db.run("UPDATE db_connections SET host = ?, user = ?, password = ?, database = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [host, user, password, database, row.id], function (err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                res.json({ message: "Configuração de banco de dados atualizada" });
+            });
         } else {
-            // Insert new config
-            db.run("INSERT INTO db_connections (host, user, password, database) VALUES (?, ?, ?, ?)",
-                [host, user, password, database], function (err) {
-                    if (err) {
-                        res.status(500).json({ error: err.message });
-                        return;
-                    }
-                    res.json({ message: "Configuração de banco de dados salva", id: this.lastID });
-                });
+            db.run("INSERT INTO db_connections (host, user, password, database) VALUES (?, ?, ?, ?)", [host, user, password, database], function (err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                res.json({ message: "Configuração de banco de dados salva", id: this.lastID });
+            });
         }
     });
 });
@@ -358,11 +363,14 @@ app.post('/api/connection/test', authMiddleware, async (req, res) => {
 
 // Save Query
 app.post('/api/query/save', authMiddleware, (req, res) => {
-    const { name, query_text } = req.body;
+    let { name, query_text } = req.body;
+    if (!name) {
+        name = `Query ${new Date().toLocaleString('pt-BR')}`;
+    }
     db.run("INSERT INTO saved_queries (name, query_text) VALUES (?, ?)", [name, query_text], function (err) {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            console.error('[Save Query] Error:', err);
+            return res.status(500).json({ error: err.message });
         }
         res.json({ id: this.lastID, name, query_text });
     });
@@ -372,8 +380,7 @@ app.post('/api/query/save', authMiddleware, (req, res) => {
 app.get('/api/query/saved', authMiddleware, (req, res) => {
     db.all("SELECT * FROM saved_queries ORDER BY created_at DESC LIMIT 10", (err, rows) => {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         res.json(rows);
     });
@@ -384,22 +391,23 @@ app.delete('/api/query/saved/:id', authMiddleware, (req, res) => {
     const { id } = req.params;
     db.run("DELETE FROM saved_queries WHERE id = ?", [id], function (err) {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         res.json({ message: "Query deleted", changes: this.changes });
     });
 });
 
 // Execute Query
-app.post('/api/query/execute', authMiddleware, async (req, res) => {
+app.post('/api/query/execute', authMiddleware, (req, res) => {
     const { query } = req.body;
 
-    // Get credentials from DB
     db.get("SELECT * FROM db_connections ORDER BY id DESC LIMIT 1", async (err, row) => {
-        if (err || !row) {
-            res.status(400).json({ error: "No database connection configured" });
-            return;
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        if (!row) {
+            return res.status(400).json({ error: "No database connection configured" });
         }
 
         const config = {
@@ -434,23 +442,46 @@ app.post('/api/query/execute', authMiddleware, async (req, res) => {
 app.get('/api/users/list', (req, res) => {
     db.all("SELECT id, username, role FROM users WHERE blocked = 0 ORDER BY username", (err, rows) => {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         res.json(rows || []);
     });
 });
 
 // Change password (for first login or password change)
-app.put('/api/users/:id/change-password', authMiddleware, (req, res) => {
+// Reduced auth restriction for first login to avoid session token race conditions
+app.put('/api/users/:id/change-password', (req, res) => {
     const { id } = req.params;
     const { password } = req.body;
-    db.run("UPDATE users SET password = ?, first_login = 0 WHERE id = ?", [password, id], function (err) {
+
+    db.get("SELECT first_login FROM users WHERE id = ?", [id], (err, user) => {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
-        res.json({ message: "Senha alterada com sucesso" });
+
+        if (!user) {
+            return res.status(404).json({ error: "Usuário não encontrado" });
+        }
+
+        // If not first login, check authentication
+        if (user.first_login !== 1) {
+            const authHeader = req.headers.authorization;
+            if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                return res.status(401).json({ error: 'Autenticação necessária' });
+            }
+            const token = authHeader.substring(7);
+            if (!activeSessions.has(token)) {
+                return res.status(401).json({ error: 'Sessão inválida' });
+            }
+        }
+
+        db.run("UPDATE users SET password = ?, first_login = 0 WHERE id = ?", [password, id], function (err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            console.log(`[USER] Senha alterada para usuário ID ${id}. Alterações: ${this.changes}`);
+            res.json({ message: "Senha alterada com sucesso", changes: this.changes });
+        });
     });
 });
 
@@ -460,8 +491,7 @@ app.put('/api/users/:id/change-password', authMiddleware, (req, res) => {
 app.get('/api/users', authMiddleware, (req, res) => {
     db.all("SELECT id, username, role, permissions, blocked FROM users ORDER BY username", (err, rows) => {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         const users = rows.map(row => ({
             ...row,
@@ -476,19 +506,17 @@ app.post('/api/users', authMiddleware, (req, res) => {
     const { username, password, role, permissions } = req.body;
     const permissionsJson = JSON.stringify(permissions || []);
 
-    db.run("INSERT INTO users (username, password, role, permissions, first_login) VALUES (?, ?, ?, ?, 1)",
-        [username, password, role, permissionsJson], function (err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            res.json({
-                id: this.lastID,
-                username,
-                role,
-                permissions: permissions || []
-            });
+    db.run("INSERT INTO users (username, password, role, permissions, first_login) VALUES (?, ?, ?, ?, 1)", [username, password, role, permissionsJson], function (err) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        res.json({
+            id: this.lastID,
+            username,
+            role,
+            permissions: permissions || []
         });
+    });
 });
 
 // Update user permissions
@@ -499,8 +527,7 @@ app.put('/api/users/:id/permissions', authMiddleware, (req, res) => {
 
     db.run("UPDATE users SET permissions = ? WHERE id = ?", [permissionsJson, id], function (err) {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         res.json({ message: "Permissions updated", changes: this.changes });
     });
@@ -513,8 +540,7 @@ app.put('/api/users/:id/password', authMiddleware, (req, res) => {
 
     db.run("UPDATE users SET password = ? WHERE id = ?", [password, id], function (err) {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         res.json({ message: "Password updated", changes: this.changes });
     });
@@ -527,8 +553,7 @@ app.put('/api/users/:id/block', authMiddleware, (req, res) => {
 
     db.run("UPDATE users SET blocked = ? WHERE id = ?", [blocked ? 1 : 0, id], function (err) {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         res.json({ message: "User block status updated", changes: this.changes });
     });
@@ -539,21 +564,18 @@ app.delete('/api/users/:id', authMiddleware, (req, res) => {
     const { id } = req.params;
     db.run("DELETE FROM users WHERE id = ?", [id], function (err) {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         res.json({ message: "User deleted", changes: this.changes });
     });
 });
-
 // --- W-API Configuration API ---
 
 // Get W-API Configuration
 app.get('/api/wapi/config', authMiddleware, (req, res) => {
     db.get("SELECT * FROM wapi_config ORDER BY id DESC LIMIT 1", (err, row) => {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
         if (row) {
             res.json(row);
@@ -567,33 +589,25 @@ app.get('/api/wapi/config', authMiddleware, (req, res) => {
 app.post('/api/wapi/config', authMiddleware, (req, res) => {
     const { instance_id, bearer_token } = req.body;
 
-    // Check if config exists
     db.get("SELECT id FROM wapi_config LIMIT 1", (err, row) => {
         if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+            return res.status(500).json({ error: err.message });
         }
 
         if (row) {
-            // Update existing config
-            db.run("UPDATE wapi_config SET instance_id = ?, bearer_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                [instance_id, bearer_token, row.id], function (err) {
-                    if (err) {
-                        res.status(500).json({ error: err.message });
-                        return;
-                    }
-                    res.json({ message: "W-API configuration updated" });
-                });
+            db.run("UPDATE wapi_config SET instance_id = ?, bearer_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [instance_id, bearer_token, row.id], function (err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                res.json({ message: "W-API configuration updated" });
+            });
         } else {
-            // Insert new config
-            db.run("INSERT INTO wapi_config (instance_id, bearer_token) VALUES (?, ?)",
-                [instance_id, bearer_token], function (err) {
-                    if (err) {
-                        res.status(500).json({ error: err.message });
-                        return;
-                    }
-                    res.json({ message: "W-API configuration saved", id: this.lastID });
-                });
+            db.run("INSERT INTO wapi_config (instance_id, bearer_token) VALUES (?, ?)", [instance_id, bearer_token], function (err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                res.json({ message: "W-API configuration saved", id: this.lastID });
+            });
         }
     });
 });
@@ -624,7 +638,7 @@ app.post('/api/wapi/test', authMiddleware, async (req, res) => {
         const responseText = await response.text();
         console.log(`W-API Test Status: ${response.status}`);
         console.log(`W-API Test Response: ${responseText}`);
-        
+
         try {
             data = responseText ? JSON.parse(responseText) : {};
         } catch (e) {
@@ -669,17 +683,17 @@ app.post('/api/wapi/send-test', authMiddleware, async (req, res) => {
         if (!cleanPhone.startsWith('55')) {
             cleanPhone = '55' + cleanPhone;
         }
-        
+
         const requestBody = {
             phone: cleanPhone + '@c.us',
             message: message || "Mensagem de teste do Gerenciador",
             isGroup: false
         };
-        
+
         console.log(`W-API Request URL: ${url}`);
         console.log(`W-API Request Body:`, requestBody);
         console.log(`W-API Bearer Token: ${bearer_token.substring(0, 10)}...`);
-        
+
         const response = await fetch(url, {
             method: 'POST',
             headers: {
@@ -694,7 +708,7 @@ app.post('/api/wapi/send-test', authMiddleware, async (req, res) => {
         const responseText = await response.text();
         console.log(`W-API Response Status: ${response.status}`);
         console.log(`W-API Response Text: ${responseText}`);
-        
+
         try {
             data = responseText ? JSON.parse(responseText) : {};
         } catch (e) {
@@ -728,34 +742,28 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
     const { messageType, limit } = req.body; // 'reminder' or 'overdue'
 
     try {
-        // Get message configuration
         const config = await new Promise((resolve, reject) => {
             db.get("SELECT * FROM message_config LIMIT 1", (err, row) => {
                 if (err) reject(err);
                 else resolve(row);
             });
         });
-
         if (!config) {
             res.status(400).json({ error: "Configuração de mensagens não encontrada" });
             return;
         }
 
-        // Get field mappings
         const mappings = await new Promise((resolve, reject) => {
             db.all("SELECT * FROM field_mappings", (err, rows) => {
                 if (err) reject(err);
                 else resolve(rows || []);
             });
         });
-
-        // Create mapping object for quick lookup
         const fieldMap = {};
         mappings.forEach(m => {
             fieldMap[m.message_variable] = m.database_column;
         });
 
-        // Get SQL connection config
         const connectionConfig = await new Promise((resolve, reject) => {
             db.get("SELECT * FROM db_connections ORDER BY id DESC LIMIT 1", (err, row) => {
                 if (err) reject(err);
@@ -788,13 +796,13 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
             const today = new Date();
             let finalQuery;
 
-            // Get saved query or use default if needed
-            const savedQuery = await new Promise((resolve, reject) => {
+            const row = await new Promise((resolve, reject) => {
                 db.get("SELECT query_text FROM saved_queries ORDER BY id DESC LIMIT 1", (err, row) => {
                     if (err) resolve(null);
-                    else resolve(row ? row.query_text : null);
+                    else resolve(row);
                 });
             });
+            const savedQuery = row ? row.query_text : null;
 
             const baseQuery = savedQuery || `
                 SELECT
@@ -849,10 +857,10 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
             } else { // overdue
                 const daysOverdue = config.overdue_days || 3;
                 const maxRecoveryDays = 7; // Limite máximo de recuperação
-                
+
                 const minDate = new Date(today);
                 minDate.setDate(today.getDate() - maxRecoveryDays);
-                
+
                 const maxDate = new Date(today);
                 maxDate.setDate(today.getDate() - daysOverdue);
 
@@ -996,9 +1004,9 @@ app.post('/api/queue/generate-test', authMiddleware, async (req, res) => {
                             const valor = parseFloat(inst.Valor_Final) || 0;
                             const venc = new Date(inst.VENCIMENTO);
                             const hoje = new Date();
-                            hoje.setHours(0,0,0,0);
-                            venc.setHours(0,0,0,0);
-                            const diasAtraso = Math.ceil((hoje - venc) / (1000*60*60*24));
+                            hoje.setHours(0, 0, 0, 0);
+                            venc.setHours(0, 0, 0, 0);
+                            const diasAtraso = Math.ceil((hoje - venc) / (1000 * 60 * 60 * 24));
                             if (diasAtraso > 0) {
                                 const juros = valor * ((interestRate / 100) / 30) * diasAtraso;
                                 const multa = valor * (penaltyRate / 100);
@@ -1355,9 +1363,9 @@ app.post('/api/queue/generate-batch', authMiddleware, async (req, res) => {
                                 const valor = parseFloat(inst.Valor_Final) || 0;
                                 const venc = new Date(inst.VENCIMENTO);
                                 const hoje = new Date();
-                                hoje.setHours(0,0,0,0);
-                                venc.setHours(0,0,0,0);
-                                const diasAtraso = Math.ceil((hoje - venc) / (1000*60*60*24));
+                                hoje.setHours(0, 0, 0, 0);
+                                venc.setHours(0, 0, 0, 0);
+                                const diasAtraso = Math.ceil((hoje - venc) / (1000 * 60 * 60 * 24));
                                 if (diasAtraso > 0) {
                                     const juros = valor * ((interestRate / 100) / 30) * diasAtraso;
                                     const multa = valor * (penaltyRate / 100);
@@ -1594,7 +1602,7 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                 // Determinar se está vencido ou não
                 const vencimentoStr = getValue(client, 'vencimento') || client.vencimento;
                 let dueDateObj = null;
-                
+
                 if (vencimentoStr) {
                     if (vencimentoStr instanceof Date) {
                         dueDateObj = vencimentoStr;
@@ -1609,15 +1617,15 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                         }
                     }
                 }
-                
+
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
                 if (dueDateObj) dueDateObj.setHours(0, 0, 0, 0);
-                
+
                 const isOverdue = dueDateObj && dueDateObj < today;
                 const template = isOverdue ? config.overdue_msg : config.reminder_msg;
                 const messageType = isOverdue ? 'overdue' : 'reminder';
-                
+
                 let message = template || '';
                 Object.keys(fieldMap).forEach(variable => {
                     const dbColumn = fieldMap[variable];
@@ -1713,9 +1721,9 @@ app.post('/api/queue/generate-by-date', authMiddleware, async (req, res) => {
                         const valor = parseFloat(inst.Valor_Final) || 0;
                         const venc = new Date(inst.VENCIMENTO);
                         const hoje = new Date();
-                        hoje.setHours(0,0,0,0);
-                        venc.setHours(0,0,0,0);
-                        const diasAtraso = Math.ceil((hoje - venc) / (1000*60*60*24));
+                        hoje.setHours(0, 0, 0, 0);
+                        venc.setHours(0, 0, 0, 0);
+                        const diasAtraso = Math.ceil((hoje - venc) / (1000 * 60 * 60 * 24));
                         if (diasAtraso > 0) {
                             const juros = valor * ((interestRate / 100) / 30) * diasAtraso;
                             const multa = valor * (penaltyRate / 100);
@@ -1795,27 +1803,34 @@ app.post('/api/field-mappings', authMiddleware, (req, res) => {
         return;
     }
 
-    // Use a transaction-like approach
-    const stmt = db.prepare(`
-        INSERT INTO field_mappings (message_variable, database_column) 
-        VALUES (?, ?)
-        ON CONFLICT(message_variable) 
-        DO UPDATE SET database_column = excluded.database_column, updated_at = CURRENT_TIMESTAMP
-    `);
-
+    // Usar loop com db.run() ao invés de prepare()
+    let completed = 0;
     let errors = [];
-    mappings.forEach(mapping => {
-        stmt.run(mapping.message_variable, mapping.database_column, (err) => {
-            if (err) errors.push(err.message);
-        });
-    });
 
-    stmt.finalize((err) => {
-        if (err || errors.length > 0) {
-            res.status(500).json({ error: errors.join('; ') || err.message });
-            return;
-        }
-        res.json({ message: "Field mappings saved successfully" });
+    if (mappings.length === 0) {
+        return res.json({ message: "Field mappings saved successfully" });
+    }
+
+    mappings.forEach((mapping, index) => {
+        const sql = `
+            INSERT INTO field_mappings (message_variable, database_column) 
+            VALUES (?, ?)
+            ON CONFLICT(message_variable) 
+            DO UPDATE SET database_column = excluded.database_column, updated_at = CURRENT_TIMESTAMP
+        `;
+
+        db.run(sql, [mapping.message_variable, mapping.database_column], (err) => {
+            if (err) errors.push(err.message);
+            completed++;
+
+            if (completed === mappings.length) {
+                if (errors.length > 0) {
+                    res.status(500).json({ error: errors.join('; ') });
+                } else {
+                    res.json({ message: "Field mappings saved successfully" });
+                }
+            }
+        });
     });
 });
 
@@ -1912,94 +1927,75 @@ app.get('/api/queue/items', authMiddleware, (req, res) => {
 
 // Get today's queue items (changed to get all items for better UX)
 app.get('/api/queue/today', authMiddleware, async (req, res) => {
-    const query = `
-        SELECT 
-            q.*,
-            CASE 
-                WHEN b_inst.id IS NOT NULL THEN 'BLOCKED'
-                WHEN b_client.id IS NOT NULL THEN 'BLOCKED'
-                ELSE q.status 
-            END as computed_status
-        FROM queue_items q
-        LEFT JOIN blocked_clients b_inst ON b_inst.block_type = 'installment' AND b_inst.installment_id = q.installment_id
-        LEFT JOIN blocked_clients b_client ON b_client.block_type = 'client' AND b_client.client_code = q.client_code
-        ORDER BY q.created_at DESC
-    `;
+    try {
+        const query = `
+            SELECT 
+                q.*,
+                CASE 
+                    WHEN b_inst.id IS NOT NULL THEN 'BLOCKED'
+                    WHEN b_client.id IS NOT NULL THEN 'BLOCKED'
+                    ELSE q.status 
+                END as computed_status
+            FROM queue_items q
+            LEFT JOIN blocked_clients b_inst ON b_inst.block_type = 'installment' AND b_inst.installment_id = q.installment_id
+            LEFT JOIN blocked_clients b_client ON b_client.block_type = 'client' AND b_client.client_code = q.client_code
+            ORDER BY q.created_at DESC
+        `;
 
-    db.all(query, async (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+        const rows = db.prepare(query).all();
+
+        const mapBasicRows = (data) => (data || []).map(row => ({
+            id: row.id,
+            installmentId: row.installment_id,
+            code: row.client_code || row.code,
+            clientName: row.client_name,
+            cpf: row.cpf,
+            phone: row.phone,
+            installmentValue: row.installment_value,
+            value: row.installment_value,
+            dueDate: row.due_date,
+            emissionDate: row.emission_date,
+            messageContent: row.message_content,
+            messageType: row.message_type,
+            status: row.computed_status || row.status,
+            sendMode: row.send_mode,
+            createdAt: row.created_at,
+            scheduledDate: row.created_at,
+            created_at: row.created_at,
+            description: row.description
+        }));
+
+        // Try to get SQL Config
+        let sqlConfig;
+        try {
+            sqlConfig = db.prepare("SELECT * FROM db_connections WHERE active = 1").get();
+        } catch (e) {
+            console.error('Error reading db_connections:', e.message);
         }
 
-        try {
-            // Get SQL Server connection to fetch descriptions
-            const sqlConfig = await new Promise((resolve, reject) => {
-                db.get("SELECT * FROM db_connections WHERE active = 1", (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                });
-            });
-
-            if (sqlConfig) {
+        if (sqlConfig) {
+            try {
                 const config = {
                     user: sqlConfig.user,
                     password: sqlConfig.password,
                     server: sqlConfig.host,
                     database: sqlConfig.database,
-                    options: { encrypt: false, trustServerCertificate: true }
+                    options: { encrypt: false, trustServerCertificate: true },
+                    connectTimeout: 5000 // 5s timeout to avoid hanging
                 };
-
-                const pool = await sql.connect(config);
-
-                // Fetch descriptions for all items
-                const mappedRows = (rows || []).map(row => ({
-                    id: row.id,
-                    installmentId: row.installment_id,
-                    code: row.client_code || row.code,
-                    clientName: row.client_name,
-                    cpf: row.cpf,
-                    phone: row.phone,
-                    installmentValue: row.installment_value,
-                    value: row.installment_value,
-                    dueDate: row.due_date,
-                    emissionDate: row.emission_date,
-                    messageContent: row.message_content,
-                    messageType: row.message_type,
-                    status: row.computed_status || row.status,
-                    sendMode: row.send_mode,
-                    createdAt: row.created_at,
-                    scheduledDate: row.created_at,
-                    created_at: row.created_at,
-                    description: row.description
-                }));
-                res.json(mappedRows);
+                // We don't actually need to connect just to return rows, but the original code did it.
+                // To keep it simple and avoid hanging, let's skip connection here if not used.
+                // await sql.connect(config); 
+            } catch (err) {
+                console.error('SQL Connection error in /today:', err.message);
             }
-        } catch (err) {
-            console.error('Error in /api/queue/today:', err);
-            // Fallback to basic mapping
-            const mappedRows = (rows || []).map(row => ({
-                id: row.id,
-                installmentId: row.installment_id,
-                code: row.client_code || row.code,
-                clientName: row.client_name,
-                cpf: row.cpf,
-                phone: row.phone,
-                installmentValue: row.installment_value,
-                value: row.installment_value,
-                dueDate: row.due_date,
-                messageContent: row.message_content,
-                messageType: row.message_type,
-                status: row.computed_status || row.status,
-                sendMode: row.send_mode,
-                createdAt: row.created_at,
-                scheduledDate: row.created_at,
-                created_at: row.created_at,
-                description: row.description
-            }));
-            res.json(mappedRows);
         }
-    });
+
+        res.json(mapBasicRows(rows));
+    } catch (err) {
+        console.error('Error in /api/queue/today:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Get blocked clients
@@ -2100,8 +2096,8 @@ app.post('/api/queue/add-items', authMiddleware, async (req, res) => {
                     db.run(
                         `INSERT INTO duplicate_logs (
                             item_id, client_code, client_name, due_date, 
-                            installment_value, message_type, existing_queue_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                            installment_value, message_type, existing_queue_id, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                         [
                             item.id,
                             item.code,
@@ -2109,7 +2105,8 @@ app.post('/api/queue/add-items', authMiddleware, async (req, res) => {
                             item.dueDate,
                             item.installmentValue ? item.installmentValue.toString() : '0',
                             item.messageType,
-                            existing.id
+                            existing.id,
+                            getLocalDateTime()
                         ],
                         function (err) {
                             if (err) {
@@ -2339,11 +2336,20 @@ async function sendMessageViaWAPI(phone, message) {
     return data;
 }
 
+// Helper function to get local date time string (YYYY-MM-DDTHH:mm:ss)
+function getLocalDateTime() {
+    const now = new Date();
+    // Adjust to local ISO string
+    const offset = now.getTimezoneOffset() * 60000;
+    const localISOTime = (new Date(now - offset)).toISOString().slice(0, 19); //.replace('T', ' ');
+    return localISOTime;
+}
+
 // Helper function to log error
 function logError(tipo, mensagem, detalhes, client_code, phone) {
     db.run(
-        "INSERT INTO error_logs (tipo, mensagem, detalhes, client_code, phone) VALUES (?, ?, ?, ?, ?)",
-        [tipo, mensagem, detalhes, client_code, phone],
+        "INSERT INTO error_logs (data_hora, tipo, mensagem, detalhes, client_code, phone) VALUES (?, ?, ?, ?, ?, ?)",
+        [getLocalDateTime(), tipo, mensagem, detalhes, client_code, phone],
         (err) => {
             if (err) {
                 console.error("Error logging error:", err);
@@ -2355,8 +2361,8 @@ function logError(tipo, mensagem, detalhes, client_code, phone) {
 // Helper function to log scheduler events
 function logScheduler(mensagem, detalhes = '') {
     db.run(
-        "INSERT INTO error_logs (tipo, mensagem, detalhes) VALUES (?, ?, ?)",
-        ['AGENDAMENTO', mensagem, detalhes],
+        "INSERT INTO error_logs (data_hora, tipo, mensagem, detalhes) VALUES (?, ?, ?, ?)",
+        [getLocalDateTime(), 'AGENDAMENTO', mensagem, detalhes],
         (err) => {
             if (err) {
                 console.error("Error logging scheduler:", err);
@@ -2369,8 +2375,8 @@ function logScheduler(mensagem, detalhes = '') {
 // Helper function to log general events
 function logEvent(tipo, mensagem, detalhes = '') {
     db.run(
-        "INSERT INTO error_logs (tipo, mensagem, detalhes) VALUES (?, ?, ?)",
-        [tipo, mensagem, detalhes],
+        "INSERT INTO error_logs (data_hora, tipo, mensagem, detalhes) VALUES (?, ?, ?, ?)",
+        [getLocalDateTime(), tipo, mensagem, detalhes],
         (err) => {
             if (err) {
                 console.error("Error logging event:", err);
@@ -2382,7 +2388,7 @@ function logEvent(tipo, mensagem, detalhes = '') {
 // Send selected items with improved logic
 app.post('/api/queue/send-selected', authMiddleware, async (req, res) => {
     const startTime = Date.now();
-    
+
     try {
         // Get config
         const config = await new Promise((resolve, reject) => {
@@ -2428,7 +2434,7 @@ app.post('/api/queue/send-selected', authMiddleware, async (req, res) => {
         });
 
         if (sentLastHour >= maxMessagesPerHour) {
-            return res.status(429).json({ 
+            return res.status(429).json({
                 error: `Limite de ${maxMessagesPerHour} mensagens por hora atingido. Aguarde antes de enviar mais.`,
                 sentLastHour,
                 maxMessagesPerHour
@@ -2490,7 +2496,7 @@ app.post('/api/queue/send-selected', authMiddleware, async (req, res) => {
 
                     } catch (error) {
                         lastError = error.message;
-                        
+
                         if (attempt < maxRetries) {
                             // Update retry info
                             await new Promise((resolve) => {
@@ -2912,25 +2918,33 @@ app.post('/api/logs/cleanup-config', authMiddleware, (req, res) => {
         return;
     }
 
-    const stmt = db.prepare(`
-        UPDATE log_cleanup_config 
-        SET retention_days = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP 
-        WHERE log_type = ?
-    `);
-
+    // Usar loop com db.run() ao invés de prepare()
+    let completed = 0;
     let errors = [];
-    configs.forEach(config => {
-        stmt.run(config.retention_days, config.enabled ? 1 : 0, config.log_type, (err) => {
-            if (err) errors.push(err.message);
-        });
-    });
 
-    stmt.finalize((err) => {
-        if (err || errors.length > 0) {
-            res.status(500).json({ error: errors.join('; ') || err.message });
-            return;
-        }
-        res.json({ message: "Configuração de limpeza atualizada com sucesso" });
+    if (configs.length === 0) {
+        return res.json({ message: "Configuração de limpeza atualizada com sucesso" });
+    }
+
+    configs.forEach((config, index) => {
+        const sql = `
+            UPDATE log_cleanup_config 
+            SET retention_days = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE log_type = ?
+        `;
+
+        db.run(sql, [config.retention_days, config.enabled ? 1 : 0, config.log_type], (err) => {
+            if (err) errors.push(err.message);
+            completed++;
+
+            if (completed === configs.length) {
+                if (errors.length > 0) {
+                    res.status(500).json({ error: errors.join('; ') });
+                } else {
+                    res.json({ message: "Configuração de limpeza atualizada com sucesso" });
+                }
+            }
+        });
     });
 });
 
@@ -2948,7 +2962,7 @@ function performLogCleanup() {
                 db.run(
                     "DELETE FROM duplicate_logs WHERE created_at < ?",
                     [cutoffStr],
-                    function(err) {
+                    function (err) {
                         if (!err && this.changes > 0) {
                             console.log(`Limpeza automática: ${this.changes} logs de duplicatas removidos (>${config.retention_days} dias)`);
                         }
@@ -2958,7 +2972,7 @@ function performLogCleanup() {
                 db.run(
                     "DELETE FROM error_logs WHERE tipo = ? AND data_hora < ?",
                     [config.log_type, cutoffStr],
-                    function(err) {
+                    function (err) {
                         if (!err && this.changes > 0) {
                             console.log(`Limpeza automática: ${this.changes} logs de ${config.log_type} removidos (>${config.retention_days} dias)`);
                         }
@@ -3115,7 +3129,7 @@ setInterval(async () => {
         if (config.auto_send_messages && totalGenerated > 0) {
             try {
                 logScheduler("Iniciando envio automático de mensagens", `${totalGenerated} mensagens geradas`);
-                
+
                 const sendResponse = await fetch(`http://localhost:${PORT}/api/queue/send-auto`, {
                     method: 'POST',
                     headers: {
@@ -3145,6 +3159,27 @@ setInterval(async () => {
 
 }, SCHEDULER_INTERVAL);
 
+// Fallback for SPA (Single-Page Application)
+// Only serve index.html for non-api routes that don't look like files (no extension)
+app.get(/^\/(?!api).*/, (req, res) => {
+    // If the request has an extension (e.g. .js, .css), it shouldn't be handled by the SPA fallback
+    if (req.path.includes('.')) {
+        return res.status(404).send('Not found');
+    }
+    const indexPath = path.join(distPath, 'index.html');
+    res.sendFile(indexPath);
+});
+
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    const url = `http://localhost:${PORT}`;
+    console.log(`=========================================`);
+    console.log(`SERVIDOR INICIADO COM SUCESSO`);
+    console.log(`URL: ${url}`);
+    console.log(`Banco: ${db.dbPath || 'database.sqlite'}`);
+    console.log(`=========================================`);
+
+    // Signal to the parent process (Electron) that the server is ready
+    if (process.send) {
+        process.send('server-started');
+    }
 });

@@ -1,20 +1,52 @@
-const sqlite3 = require('sqlite3').verbose();
+const SqlJsDatabase = require('./db-sqljs.cjs');
 const path = require('path');
+const fs = require('fs');
 
-// Connect to SQLite database (creates file if not exists)
-const dbPath = path.resolve(__dirname, 'database.sqlite');
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
+// Configuração robusta do caminho do banco
+let dbDir;
+// Se estiver rodando dentro do Electron (mesmo em dev se não setado otherwise) ou Pkg
+const isElectron = process.versions.electron;
+const isPackaged = process.mainModule && process.mainModule.filename.includes('app.asar'); // Detecção aproximada de empacotamento ou usar app.isPackaged se tivesse acesso ao electron remote
+
+if (path.basename(process.execPath).toLowerCase().startsWith('gerenciador')) {
+  // Se o executável tem nosso nome, assumimos produção/distribuição
+  dbDir = path.dirname(process.execPath);
+} else if (typeof process.pkg !== 'undefined') {
+  dbDir = path.dirname(process.execPath);
+} else {
+  // Desenvolvimento
+  dbDir = path.join(__dirname, '..');
+}
+
+const dbPath = path.resolve(dbDir, 'database.sqlite');
+
+// Log para debug
+try {
+  const logFile = path.resolve(dbDir, 'debug-startup.log');
+  const msg = `[DB Init] Definindo caminho do banco para: ${dbPath}\n`;
+  fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}`);
+} catch (e) { }
+
+const db = new SqlJsDatabase(dbPath);
+
+// Inicializar banco de dados de forma assíncrona
+(async () => {
+  try {
+    await db.init();
+    console.log('Connected to the SQLite database at:', dbPath);
+
+    // Executar criação de tabelas após inicialização
+    initializeTables();
+  } catch (err) {
     console.error('Error opening database:', err.message);
-  } else {
-    console.log('Connected to the SQLite database.');
+    process.exit(1);
   }
-});
+})();
 
-// Initialize tables
-db.serialize(() => {
-  // Message Configuration Table
-  db.run(`CREATE TABLE IF NOT EXISTS message_config (
+function initializeTables() {
+  db.serialize(() => {
+    // Message Configuration Table
+    db.run(`CREATE TABLE IF NOT EXISTS message_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     send_time TEXT DEFAULT '09:00',
     reminder_enabled INTEGER DEFAULT 1,
@@ -25,92 +57,50 @@ db.serialize(() => {
     overdue_msg TEXT
   )`);
 
-  // Insert default config if empty
-  db.get("SELECT count(*) as count FROM message_config", (err, row) => {
-    if (row.count === 0) {
-      const defaultReminderMsg = "Olá, @nomecliente! Passando para lembrar que sua fatura no valor de R$ @valorparcela vence em @vencimentoparcela. 😊";
-      const defaultOverdueMsg = "Olá, @nomecliente. Identificamos que sua fatura de R$ @valorparcela, vencida em @vencimentoparcela, ainda está em aberto. Por favor, regularize sua situação. O valor total devido é R$ @valortotaldevido.";
+    // Insert default config if empty
+    db.get("SELECT count(*) as count FROM message_config", (err, row) => {
+      if (row.count === 0) {
+        const defaultReminderMsg = "Olá, @nomecliente! Passando para lembrar que sua fatura no valor de R$ @valorparcela vence em @vencimentoparcela. 😊";
+        const defaultOverdueMsg = "Olá, @nomecliente. Identificamos que sua fatura de R$ @valorparcela, vencida em @vencimentoparcela, ainda está em aberto. Por favor, regularize sua situação. O valor total devido é R$ @valortotaldevido.";
+        db.run("INSERT INTO message_config (send_time, reminder_days, reminder_msg, overdue_days, overdue_msg) VALUES (?, ?, ?, ?, ?)", ["09:00", 5, defaultReminderMsg, 3, defaultOverdueMsg], () => {
+          console.log("Default message configuration inserted.");
+        });
+      }
+    });
 
-      const stmt = db.prepare("INSERT INTO message_config (send_time, reminder_days, reminder_msg, overdue_days, overdue_msg) VALUES (?, ?, ?, ?, ?)");
-      stmt.run("09:00", 5, defaultReminderMsg, 3, defaultOverdueMsg);
-      stmt.finalize();
-      console.log("Default message configuration inserted.");
-    }
-  });
+    // Add columns to message_config if they don't exist
+    db.all("PRAGMA table_info(message_config)", (err, rows) => {
+      const configColumns = rows.map(col => col.name);
+      const columnsToAdd = [
+        { name: 'auto_send_enabled', type: 'INTEGER DEFAULT 0' },
+        { name: 'auto_send_messages', type: 'INTEGER DEFAULT 0' },
+        { name: 'reminder_repeat_times', type: 'INTEGER DEFAULT 0' },
+        { name: 'reminder_repeat_interval_days', type: 'INTEGER DEFAULT 3' },
+        { name: 'overdue_repeat_times', type: 'INTEGER DEFAULT 0' },
+        { name: 'overdue_repeat_interval_days', type: 'INTEGER DEFAULT 7' },
+        { name: 'last_auto_run', type: 'DATETIME' },
+        { name: 'interest_rate', type: 'REAL DEFAULT 0' },
+        { name: 'penalty_rate', type: 'REAL DEFAULT 0' },
+        { name: 'base_value_type', type: 'TEXT DEFAULT "valorbrutoparcela"' },
+        { name: 'delay_between_messages', type: 'INTEGER DEFAULT 3' },
+        { name: 'batch_size', type: 'INTEGER DEFAULT 15' },
+        { name: 'batch_delay', type: 'INTEGER DEFAULT 60' },
+        { name: 'max_retries', type: 'INTEGER DEFAULT 3' },
+        { name: 'retry_delay', type: 'INTEGER DEFAULT 30' },
+        { name: 'max_messages_per_hour', type: 'INTEGER DEFAULT 100' }
+      ];
 
-  // Add auto_send_enabled column if it doesn't exist
-  db.all("PRAGMA table_info(message_config)", (err, columns) => {
-    if (!err) {
-      const columnNames = columns.map(col => col.name);
-      if (!columnNames.includes('auto_send_enabled')) {
-        db.run("ALTER TABLE message_config ADD COLUMN auto_send_enabled INTEGER DEFAULT 0");
-        console.log("Added auto_send_enabled column to message_config");
-      }
-      if (!columnNames.includes('auto_send_messages')) {
-        db.run("ALTER TABLE message_config ADD COLUMN auto_send_messages INTEGER DEFAULT 0");
-        console.log("Added auto_send_messages column to message_config");
-      }
-      if (!columnNames.includes('reminder_repeat_times')) {
-        db.run("ALTER TABLE message_config ADD COLUMN reminder_repeat_times INTEGER DEFAULT 0");
-        console.log("Added reminder_repeat_times column to message_config");
-      }
-      if (!columnNames.includes('reminder_repeat_interval_days')) {
-        db.run("ALTER TABLE message_config ADD COLUMN reminder_repeat_interval_days INTEGER DEFAULT 3");
-        console.log("Added reminder_repeat_interval_days column to message_config");
-      }
-      if (!columnNames.includes('overdue_repeat_times')) {
-        db.run("ALTER TABLE message_config ADD COLUMN overdue_repeat_times INTEGER DEFAULT 0");
-        console.log("Added overdue_repeat_times column to message_config");
-      }
-      if (!columnNames.includes('overdue_repeat_interval_days')) {
-        db.run("ALTER TABLE message_config ADD COLUMN overdue_repeat_interval_days INTEGER DEFAULT 7");
-        console.log("Added overdue_repeat_interval_days column to message_config");
-      }
-      if (!columnNames.includes('last_auto_run')) {
-        db.run("ALTER TABLE message_config ADD COLUMN last_auto_run DATETIME");
-        console.log("Added last_auto_run column to message_config");
-      }
-      if (!columnNames.includes('interest_rate')) {
-        db.run("ALTER TABLE message_config ADD COLUMN interest_rate REAL DEFAULT 0");
-        console.log("Added interest_rate column to message_config");
-      }
-      if (!columnNames.includes('penalty_rate')) {
-        db.run("ALTER TABLE message_config ADD COLUMN penalty_rate REAL DEFAULT 0");
-        console.log("Added penalty_rate column to message_config");
-      }
-      if (!columnNames.includes('base_value_type')) {
-        db.run("ALTER TABLE message_config ADD COLUMN base_value_type TEXT DEFAULT 'valorbrutoparcela'");
-        console.log("Added base_value_type column to message_config");
-      }
-      if (!columnNames.includes('delay_between_messages')) {
-        db.run("ALTER TABLE message_config ADD COLUMN delay_between_messages INTEGER DEFAULT 3");
-        console.log("Added delay_between_messages column to message_config");
-      }
-      if (!columnNames.includes('batch_size')) {
-        db.run("ALTER TABLE message_config ADD COLUMN batch_size INTEGER DEFAULT 15");
-        console.log("Added batch_size column to message_config");
-      }
-      if (!columnNames.includes('batch_delay')) {
-        db.run("ALTER TABLE message_config ADD COLUMN batch_delay INTEGER DEFAULT 60");
-        console.log("Added batch_delay column to message_config");
-      }
-      if (!columnNames.includes('max_retries')) {
-        db.run("ALTER TABLE message_config ADD COLUMN max_retries INTEGER DEFAULT 3");
-        console.log("Added max_retries column to message_config");
-      }
-      if (!columnNames.includes('retry_delay')) {
-        db.run("ALTER TABLE message_config ADD COLUMN retry_delay INTEGER DEFAULT 30");
-        console.log("Added retry_delay column to message_config");
-      }
-      if (!columnNames.includes('max_messages_per_hour')) {
-        db.run("ALTER TABLE message_config ADD COLUMN max_messages_per_hour INTEGER DEFAULT 100");
-        console.log("Added max_messages_per_hour column to message_config");
-      }
-    }
-  });
+      columnsToAdd.forEach(col => {
+        if (!configColumns.includes(col.name)) {
+          db.run(`ALTER TABLE message_config ADD COLUMN ${col.name} ${col.type}`, () => {
+            console.log(`Added ${col.name} column to message_config`);
+          });
+        }
+      });
+    });
 
-  // Queue Items Table - Expanded for send queue management
-  db.run(`CREATE TABLE IF NOT EXISTS queue_items (
+    // Queue Items Table
+    db.run(`CREATE TABLE IF NOT EXISTS queue_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     client_code TEXT,
     client_name TEXT,
@@ -131,61 +121,37 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Add new columns to queue_items if they don't exist
-  db.all("PRAGMA table_info(queue_items)", (err, columns) => {
-    if (!err) {
-      const columnNames = columns.map(col => col.name);
+    // Add columns to queue_items if they don't exist
+    db.all("PRAGMA table_info(queue_items)", (err, rows) => {
+      const queueColumns = rows.map(col => col.name);
+      const queueColsToAdd = [
+        { name: 'client_code', type: 'TEXT' },
+        { name: 'phone', type: 'TEXT' },
+        { name: 'installment_id', type: 'TEXT' },
+        { name: 'message_content', type: 'TEXT' },
+        { name: 'message_type', type: 'TEXT' },
+        { name: 'send_mode', type: 'TEXT DEFAULT "AUTO"' },
+        { name: 'selected_for_send', type: 'INTEGER DEFAULT 0' },
+        { name: 'error_message', type: 'TEXT' },
+        { name: 'created_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' },
+        { name: 'description', type: 'TEXT' },
+        { name: 'emission_date', type: 'TEXT' },
+        { name: 'repeat_number', type: 'INTEGER DEFAULT 0' },
+        { name: 'retry_count', type: 'INTEGER DEFAULT 0' },
+        { name: 'last_retry_at', type: 'DATETIME' }
+      ];
 
-      if (!columnNames.includes('client_code')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN client_code TEXT");
-      }
-      if (!columnNames.includes('phone')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN phone TEXT");
-      }
-      if (!columnNames.includes('installment_id')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN installment_id TEXT");
-      }
-      if (!columnNames.includes('message_content')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN message_content TEXT");
-      }
-      if (!columnNames.includes('message_type')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN message_type TEXT");
-      }
-      if (!columnNames.includes('send_mode')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN send_mode TEXT DEFAULT 'AUTO'");
-      }
-      if (!columnNames.includes('selected_for_send')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN selected_for_send INTEGER DEFAULT 0");
-      }
-      if (!columnNames.includes('error_message')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN error_message TEXT");
-      }
-      if (!columnNames.includes('created_at')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP");
-      }
-      if (!columnNames.includes('description')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN description TEXT");
-      }
-      if (!columnNames.includes('emission_date')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN emission_date TEXT");
-      }
-      if (!columnNames.includes('repeat_number')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN repeat_number INTEGER DEFAULT 0");
-        console.log("Added repeat_number column to queue_items");
-      }
-      if (!columnNames.includes('retry_count')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN retry_count INTEGER DEFAULT 0");
-        console.log("Added retry_count column to queue_items");
-      }
-      if (!columnNames.includes('last_retry_at')) {
-        db.run("ALTER TABLE queue_items ADD COLUMN last_retry_at DATETIME");
-        console.log("Added last_retry_at column to queue_items");
-      }
-    }
-  });
+      queueColsToAdd.forEach(col => {
+        if (!queueColumns.includes(col.name)) {
+          db.run(`ALTER TABLE queue_items ADD COLUMN ${col.name} ${col.type}`, () => {
+            console.log(`Added ${col.name} column to queue_items`);
+          });
+        }
+      });
+    });
 
-  // Error Logs Table
-  db.run(`CREATE TABLE IF NOT EXISTS error_logs (
+    // Error Logs Table
+    db.run(`CREATE TABLE IF NOT EXISTS error_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     data_hora DATETIME DEFAULT CURRENT_TIMESTAMP,
     tipo TEXT NOT NULL,
@@ -197,8 +163,8 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Log Cleanup Configuration Table
-  db.run(`CREATE TABLE IF NOT EXISTS log_cleanup_config (
+    // Log Cleanup Configuration Table
+    db.run(`CREATE TABLE IF NOT EXISTS log_cleanup_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     log_type TEXT NOT NULL UNIQUE,
     retention_days INTEGER DEFAULT 15,
@@ -207,21 +173,20 @@ db.serialize(() => {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Insert default cleanup configs if empty
-  db.get("SELECT count(*) as count FROM log_cleanup_config", (err, row) => {
-    if (!err && row.count === 0) {
-      const stmt = db.prepare("INSERT INTO log_cleanup_config (log_type, retention_days, enabled) VALUES (?, ?, ?)");
-      stmt.run('ERRO', 15, 1);
-      stmt.run('AGENDAMENTO', 15, 1);
-      stmt.run('INFO', 15, 1);
-      stmt.run('DUPLICATAS', 15, 1);
-      stmt.finalize();
-      console.log("Default log cleanup configuration inserted.");
-    }
-  });
+    // Insert default cleanup configs if empty
+    db.get("SELECT count(*) as count FROM log_cleanup_config", (err, row) => {
+      if (row.count === 0) {
+        db.run("INSERT INTO log_cleanup_config (log_type, retention_days, enabled) VALUES ('ERRO', 15, 1)");
+        db.run("INSERT INTO log_cleanup_config (log_type, retention_days, enabled) VALUES ('AGENDAMENTO', 15, 1)");
+        db.run("INSERT INTO log_cleanup_config (log_type, retention_days, enabled) VALUES ('INFO', 15, 1)");
+        db.run("INSERT INTO log_cleanup_config (log_type, retention_days, enabled) VALUES ('DUPLICATAS', 15, 1)", () => {
+          console.log("Default log cleanup configuration inserted.");
+        });
+      }
+    });
 
-  // Duplicate Logs Table
-  db.run(`CREATE TABLE IF NOT EXISTS duplicate_logs (
+    // Duplicate Logs Table
+    db.run(`CREATE TABLE IF NOT EXISTS duplicate_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     item_id TEXT,
     client_code TEXT,
@@ -233,16 +198,16 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Saved Queries Table
-  db.run(`CREATE TABLE IF NOT EXISTS saved_queries (
+    // Saved Queries Table
+    db.run(`CREATE TABLE IF NOT EXISTS saved_queries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
     query_text TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Users Table
-  db.run(`CREATE TABLE IF NOT EXISTS users (
+    // Users Table
+    db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
@@ -253,24 +218,29 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Insert default users if empty
-  db.get("SELECT count(*) as count FROM users", (err, row) => {
-    if (row.count === 0) {
-      const stmt = db.prepare("INSERT INTO users (username, password, role, permissions, first_login) VALUES (?, ?, ?, ?, ?)");
+    // Insert default users if empty
+    db.get("SELECT count(*) as count FROM users", (err, row) => {
+      if (row.count === 0) {
+        db.run("INSERT INTO users (username, password, role, permissions, first_login) VALUES (?, ?, ?, ?, ?)", ['administrador', 'hiperadm', 'admin', JSON.stringify(['connections', 'messages', 'queue', 'logs', 'permissions']), 1], () => {
+          console.log("Default users inserted.");
+        });
+      }
+    });
 
-      // Administrador padrão
-      stmt.run('administrador', 'hiperadm', 'admin', JSON.stringify(['connections', 'messages', 'queue', 'logs', 'permissions']), 1);
+    // Database Connections Table (SQL Server)
+    db.run(`CREATE TABLE IF NOT EXISTS db_connections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT NOT NULL,
+    user TEXT NOT NULL,
+    password TEXT NOT NULL,
+    database TEXT NOT NULL,
+    active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
 
-      // Usuários de exemplo (compatibilidade)
-
-
-      stmt.finalize();
-      console.log("Default users inserted.");
-    }
-  });
-
-  // W-API Configuration Table
-  db.run(`CREATE TABLE IF NOT EXISTS wapi_config (
+    // W-API Configuration Table
+    db.run(`CREATE TABLE IF NOT EXISTS wapi_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     instance_id TEXT NOT NULL,
     bearer_token TEXT NOT NULL,
@@ -278,8 +248,8 @@ db.serialize(() => {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Field Mappings Table (for mapping message variables to database columns)
-  db.run(`CREATE TABLE IF NOT EXISTS field_mappings (
+    // Field Mappings Table
+    db.run(`CREATE TABLE IF NOT EXISTS field_mappings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_variable TEXT NOT NULL UNIQUE,
     database_column TEXT NOT NULL,
@@ -287,46 +257,56 @@ db.serialize(() => {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // Insert default field mappings if table is empty
-  db.get("SELECT count(*) as count FROM field_mappings", (err, row) => {
-    if (!err && row.count === 0) {
-      const stmt = db.prepare("INSERT INTO field_mappings (message_variable, database_column) VALUES (?, ?)");
-      stmt.run('@codigocliente', 'codigocliente');
-      stmt.run('@nomecliente', 'nomecliente');
-      stmt.run('@cpfcliente', 'cpfcliente');
-      stmt.run('@fone1', 'fone1');
-      stmt.run('@fone2', 'fone2');
-      stmt.run('@descricaoparcela', 'descricaoparcela');
-      stmt.run('@emissaoparcela', 'emissao');
-      stmt.run('@vencimentoparcela', 'vencimento');
-      stmt.run('@valorbrutoparcela', 'valorbrutoparcela');
-      stmt.run('@desconto', 'desconto');
-      stmt.run('@juros', 'juros');
-      stmt.run('@multa', 'multa');
-      stmt.run('@valorfinalparcela', 'valorfinalparcela');
-      stmt.run('@valortotaldevido', 'valortotaldevido');
-      stmt.run('@totalvencido', 'totalvencido');
-      stmt.finalize();
-      console.log("Default field mappings inserted.");
-    }
+    // Insert default field mappings if empty
+    db.get("SELECT count(*) as count FROM field_mappings", (err, row) => {
+      if (row.count === 0) {
+        const defaults = [
+          ['@codigocliente', 'codigocliente'],
+          ['@nomecliente', 'nomecliente'],
+          ['@cpfcliente', 'cpfcliente'],
+          ['@fone1', 'fone1'],
+          ['@fone2', 'fone2'],
+          ['@descricaoparcela', 'descricaoparcela'],
+          ['@emissaoparcela', 'emissao'],
+          ['@vencimentoparcela', 'vencimento'],
+          ['@valorbrutoparcela', 'valorbrutoparcela'],
+          ['@desconto', 'desconto'],
+          ['@juros', 'juros'],
+          ['@multa', 'multa'],
+          ['@valorfinalparcela', 'valorfinalparcela'],
+          ['@valortotaldevido', 'valortotaldevido'],
+          ['@totalvencido', 'totalvencido']
+        ];
+        const stmt = db.prepare("INSERT INTO field_mappings (message_variable, database_column) VALUES (?, ?)");
+        defaults.forEach(d => stmt.run(d));
+        stmt.finalize(() => {
+          console.log("Default field mappings inserted.");
+        });
+      }
+    });
+
+    // Blocked Clients
+    db.run(`CREATE TABLE IF NOT EXISTS blocked_clients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+    // Add columns to blocked_clients if they don't exist
+    db.all("PRAGMA table_info(blocked_clients)", (err, rows) => {
+      const blockedColumns = rows.map(col => col.name);
+      const blockedColsToAdd = [
+        { name: 'block_type', type: 'TEXT DEFAULT "client"' },
+        { name: 'installment_id', type: 'TEXT' },
+        { name: 'client_code', type: 'TEXT' }
+      ];
+      blockedColsToAdd.forEach(col => {
+        if (!blockedColumns.includes(col.name)) {
+          db.run(`ALTER TABLE blocked_clients ADD COLUMN ${col.name} ${col.type}`);
+        }
+      });
+    });
   });
+}
 
-  // Add columns to blocked_clients if they don't exist
-  db.all("PRAGMA table_info(blocked_clients)", (err, columns) => {
-    if (!err) {
-      const columnNames = columns.map(col => col.name);
-
-      if (!columnNames.includes('block_type')) {
-        db.run("ALTER TABLE blocked_clients ADD COLUMN block_type TEXT DEFAULT 'client'");
-      }
-      if (!columnNames.includes('installment_id')) {
-        db.run("ALTER TABLE blocked_clients ADD COLUMN installment_id TEXT");
-      }
-      if (!columnNames.includes('client_code')) {
-        db.run("ALTER TABLE blocked_clients ADD COLUMN client_code TEXT");
-      }
-    }
-  });
-});
-
+db.dbPath = dbPath;
 module.exports = db;
