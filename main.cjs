@@ -3,8 +3,21 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 
-// Configuração de Log
-const logFile = path.join(path.dirname(process.execPath), 'app-debug.log');
+// PORTABLE PATH RESOLUTION - Crucial for portable EXE
+// PORTABLE_EXECUTABLE_FILE aponta para o EXE original do usuário
+// Quando não existe, usamos o execPath (development ou instalador)
+const portableExeFile = process.env.PORTABLE_EXECUTABLE_FILE;
+const actualBasePath = portableExeFile
+  ? path.dirname(portableExeFile)
+  : path.dirname(process.execPath);
+
+// Expor globalmente para o servidor usar
+process.env.PORTABLE_BASE_PATH = actualBasePath;
+process.env.ELECTRON_RESOURCES_PATH = process.resourcesPath;
+process.env.IS_PORTABLE = 'true';
+
+// Configuração de Log - NA PASTA CORRETA
+const logFile = path.join(actualBasePath, 'app-debug.log');
 
 function log(message) {
   try {
@@ -16,7 +29,9 @@ function log(message) {
 }
 
 log('--- INICIANDO APLICAÇÃO ---');
-log(`ExecPath: ${process.execPath}`);
+log(`PORTABLE_EXECUTABLE_FILE: ${portableExeFile || 'N/A'}`);
+log(`ActualBasePath: ${actualBasePath}`);
+log(`ExecPath (pode ser TEMP): ${process.execPath}`);
 log(`DirName: ${__dirname}`);
 
 let tray = null;

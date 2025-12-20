@@ -34,9 +34,11 @@ class SqlJsDatabase {
             log('[SQL.js] Iniciando carregamento...');
 
             const isPkg = typeof process.pkg !== 'undefined';
-            // Em produção (Electron), o arquivo está em resources/app/assets ou similar
-            // Vamos tentar encontrar o arquivo wasm
-            const wasmPath = path.join(__dirname, '..', 'assets', 'sql-wasm.wasm');
+            // Prefer path passed by Electron
+            const resourcesPath = process.env.ELECTRON_RESOURCES_PATH ||
+                (process.versions.electron ? process.resourcesPath : path.join(__dirname, '..'));
+
+            const wasmPath = path.join(resourcesPath, 'assets', 'sql-wasm.wasm');
             log(`[SQL.js] Procurando WASM em: ${wasmPath}`);
             log(`[SQL.js] Arquivo existe? ${fs.existsSync(wasmPath)}`);
 
@@ -86,17 +88,32 @@ class SqlJsDatabase {
     }
 
     /**
-     * Salva o banco de dados no arquivo
+     * Salva o banco de dados no arquivo de forma atômica (Seguro contra falhas)
      */
     save() {
         if (!this.db) return;
 
+        const tempPath = this.dbPath + '.tmp';
         try {
             const data = this.db.export();
             const buffer = Buffer.from(data);
-            fs.writeFileSync(this.dbPath, buffer);
+
+            // 1. Escreve no arquivo temporário
+            fs.writeFileSync(tempPath, buffer);
+
+            // 2. Garante que os dados foram gravados fisicamente no disco (Flush)
+            const fd = fs.openSync(tempPath, 'r+');
+            fs.fsyncSync(fd);
+            fs.closeSync(fd);
+
+            // 3. Renomeia de forma atômica (Substitui o original apenas se o novo estiver completo)
+            fs.renameSync(tempPath, this.dbPath);
         } catch (error) {
             console.error('[SQL.js] Save error:', error);
+            // Tenta limpar o arquivo temporário se falhar
+            try {
+                if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+            } catch (e) { }
         }
     }
 

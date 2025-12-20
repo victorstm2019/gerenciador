@@ -13,7 +13,8 @@
     "dev:full": "node dev-full.cjs",
     "build:exe": "node build-electron-final.cjs",
     "electron": "electron .",
-    "dist": "npm run build && electron-builder --win portable"
+    "dist": "npm run build && electron-builder --win portable",
+    "build:portable": "node prepare-db-template.cjs && npm run build && electron-builder --win portable"
   },
   "dependencies": {
     "body-parser": "^2.2.1",
@@ -42,6 +43,10 @@
     "directories": {
       "output": "release"
     },
+    "extraResources": [
+      "assets/template.sqlite",
+      "assets/sql-wasm.wasm"
+    ],
     "files": [
       "main.cjs",
       "server/**/*",

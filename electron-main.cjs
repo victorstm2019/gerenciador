@@ -18,17 +18,48 @@ const startServer = () => {
   return new Promise((resolve, reject) => {
     // The server entry point is 'server/index.cjs'
     const serverPath = path.join(__dirname, 'server', 'index.cjs');
-    
-    serverProcess = fork(serverPath, [], {
+
+    const actualBasePath = process.env.PORTABLE_EXECUTABLE_DIR ||
+      (process.env.PORTABLE_EXECUTABLE_FILE ? path.dirname(process.env.PORTABLE_EXECUTABLE_FILE) : null) ||
+      path.dirname(app.getPath('exe'));
+
+    // Global variable for the tray menu
+    global.dbDir = actualBasePath;
+
+    serverProcess = fork(serverPath, [`--base-path=${actualBasePath}`], {
       stdio: 'pipe', // Pipe stdout/stderr to parent
-      env: { ...process.env, PORT: PORT.toString() }
+      cwd: actualBasePath,
+      env: {
+        ...process.env,
+        PORT: PORT.toString(),
+        ELECTRON_RESOURCES_PATH: process.resourcesPath,
+        ELECTRON_EXEC_PATH: process.execPath,
+        PORTABLE_EXECUTABLE_DIR: process.env.PORTABLE_EXECUTABLE_DIR,
+        INIT_CWD: process.env.INIT_CWD || process.cwd(),
+        IS_PORTABLE: 'true'
+      }
     });
 
+    // DIAGNOSTIC STARTUP DIALOG
+    if (app.isPackaged) {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Diagnóstico de Inicialização',
+        message: 'O Gerenciador está localizando os arquivos...',
+        detail: `Pasta Detectada: ${actualBasePath}\n` +
+          `PORTABLE_EXECUTABLE_DIR: ${process.env.PORTABLE_EXECUTABLE_DIR || 'N/A'}\n` +
+          `EXE Path: ${app.getPath('exe')}`,
+        buttons: ['Continuar']
+      });
+    }
+
     serverProcess.on('message', (message) => {
-        if (message === 'server-started') {
-            console.log('Backend server has started.');
-            resolve();
-        }
+      if (message === 'server-started') {
+        console.log('Backend server has started.');
+        resolve();
+      } else if (message && message.type === 'error') {
+        dialog.showErrorBox('Erro no Servidor', message.message);
+      }
     });
 
     serverProcess.on('error', (err) => {
@@ -38,7 +69,9 @@ const startServer = () => {
 
     serverProcess.on('exit', (code) => {
       console.log(`Server process exited with code ${code}`);
-      // Optionally handle server crashes here
+      if (code !== 0 && !app.isQuitting) {
+        dialog.showErrorBox('Servidor Encerrado', `O backend parou inesperadamente (Código: ${code}). Verifique se há outra instância aberta.`);
+      }
     });
 
     // Log server output for debugging
@@ -91,6 +124,31 @@ const createTray = () => {
         shell.openExternal(APP_URL);
       },
     },
+    {
+      label: 'Abrir Pasta do Banco',
+      click: () => {
+        if (global.dbDir) {
+          shell.openPath(global.dbDir);
+        } else {
+          dialog.showErrorBox('Erro', 'Pasta do banco não identificada.');
+        }
+      },
+    },
+    {
+      label: 'Diagnóstico de Caminhos',
+      click: () => {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'Diagnóstico',
+          message: 'Informações de Localização',
+          detail: `Caminho Base (Banco): ${global.dbDir}\n` +
+            `Executável: ${app.getPath('exe')}\n` +
+            `Portable Dir: ${process.env.PORTABLE_EXECUTABLE_DIR || 'N/A'}\n` +
+            `Pasta AppData: ${app.getPath('userData')}`,
+          buttons: ['Fechar']
+        });
+      }
+    },
     { type: 'separator' },
     {
       label: 'Sair',
@@ -118,7 +176,7 @@ app.on('ready', async () => {
     await startServer();
     createWindow();
     createTray();
-  } catch(error) {
+  } catch (error) {
     dialog.showErrorBox('Erro na Aplicação', `Não foi possível iniciar o servidor. Verifique os logs.\n${error}`);
     app.quit();
   }

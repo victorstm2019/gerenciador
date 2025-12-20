@@ -4,21 +4,57 @@ const fs = require('fs');
 
 // Configuração robusta do caminho do banco
 let dbDir;
-// Se estiver rodando dentro do Electron (mesmo em dev se não setado otherwise) ou Pkg
 const isElectron = process.versions.electron;
-const isPackaged = process.mainModule && process.mainModule.filename.includes('app.asar'); // Detecção aproximada de empacotamento ou usar app.isPackaged se tivesse acesso ao electron remote
+const isPortable = process.env.IS_PORTABLE === 'true';
 
-if (path.basename(process.execPath).toLowerCase().startsWith('gerenciador')) {
-  // Se o executável tem nosso nome, assumimos produção/distribuição
-  dbDir = path.dirname(process.execPath);
-} else if (typeof process.pkg !== 'undefined') {
-  dbDir = path.dirname(process.execPath);
-} else {
-  // Desenvolvimento
-  dbDir = path.join(__dirname, '..');
+// PRIORITY 1: Path set by main.cjs (CORRETO - pasta do EXE original)
+if (process.env.PORTABLE_BASE_PATH) {
+  dbDir = process.env.PORTABLE_BASE_PATH;
+}
+// PRIORITY 2: CLI argument from electron-main.cjs (fork mode)
+else {
+  const args = process.argv.slice(2);
+  const basePathArg = args.find(arg => arg.startsWith('--base-path='));
+  if (basePathArg) {
+    dbDir = basePathArg.split('=')[1];
+  } else if (isPortable) {
+    dbDir = process.cwd();
+  } else if (path.basename(process.execPath).toLowerCase().startsWith('gerenciador')) {
+    dbDir = path.dirname(process.execPath);
+  } else if (typeof process.pkg !== 'undefined') {
+    dbDir = path.dirname(process.execPath);
+  } else {
+    dbDir = path.join(__dirname, '..');
+  }
+}
+
+// Garante que o diretório existe
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
 }
 
 const dbPath = path.resolve(dbDir, 'database.sqlite');
+// Prefer env var from main, fallback to resourcesPath (if in renderer/main), then dev assets
+const resourcesPath = process.env.ELECTRON_RESOURCES_PATH || process.resourcesPath || __dirname;
+const templatePath = path.join(resourcesPath, 'assets', 'template.sqlite');
+
+// DIAGNOSTIC LOG
+try {
+  const diagFile = path.resolve(dbDir, 'diagnosis.txt');
+  const info = `
+Timestamp: ${new Date().toISOString()}
+ExecPath: ${process.execPath}
+DbDir: ${dbDir}
+DbPath: ${dbPath}
+TemplatePath: ${templatePath}
+IsPortable: ${isPortable}
+Env_PDIR: ${process.env.PORTABLE_EXECUTABLE_DIR}
+Env_RESOURCES: ${process.env.ELECTRON_RESOURCES_PATH}
+    `;
+  fs.writeFileSync(diagFile, info);
+} catch (e) {
+  if (process.send) process.send({ type: 'error', message: `Erro ao criar diagnosis.txt em ${dbDir}: ${e.message}` });
+}
 
 // Log para debug
 try {
@@ -27,6 +63,23 @@ try {
   fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}`);
 } catch (e) { }
 
+// Lógica de Migração de Template (Portable)
+if (!fs.existsSync(dbPath)) {
+  console.log('Database not found at', dbPath);
+  try {
+    if (fs.existsSync(templatePath)) {
+      console.log('Found template at', templatePath, 'copying to', dbPath);
+      fs.copyFileSync(templatePath, dbPath);
+    } else {
+      console.error('Template not found at', templatePath);
+      if (process.send) process.send({ type: 'error', message: `Template não encontrado em:\n${templatePath}` });
+    }
+  } catch (err) {
+    console.error('Error copying template:', err);
+    if (process.send) process.send({ type: 'error', message: `Erro ao copiar template para ${dbPath}:\n${err.message}` });
+  }
+}
+
 const db = new SqlJsDatabase(dbPath);
 
 // Inicializar banco de dados de forma assíncrona
@@ -34,6 +87,8 @@ const db = new SqlJsDatabase(dbPath);
   try {
     await db.init();
     console.log('Connected to the SQLite database at:', dbPath);
+
+    // REMOVED WAL MODE - incompatible with sql.js manual persistence strategy
 
     // Executar criação de tabelas após inicialização
     initializeTables();
