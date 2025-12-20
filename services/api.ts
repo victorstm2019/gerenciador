@@ -44,7 +44,7 @@ class ApiService {
             // For now, we just throw, but we could dispatch an event or clear localStorage
             localStorage.removeItem('user');
             window.location.href = '/#/login';
-            throw new Error('Sessão expirada. Por favor, faça login novamente.');
+            throw new Error('Senha inválida, tente novamente');
         }
 
         if (!response.ok) {

@@ -89,31 +89,93 @@ class SqlJsDatabase {
 
     /**
      * Salva o banco de dados no arquivo de forma atômica (Seguro contra falhas)
+     * Implementa retry logic para lidar com problemas de permissão no Windows
      */
     save() {
         if (!this.db) return;
 
         const tempPath = this.dbPath + '.tmp';
-        try {
-            const data = this.db.export();
-            const buffer = Buffer.from(data);
+        const maxRetries = 5;
+        const retryDelay = 100; // ms
 
-            // 1. Escreve no arquivo temporário
-            fs.writeFileSync(tempPath, buffer);
-
-            // 2. Garante que os dados foram gravados fisicamente no disco (Flush)
-            const fd = fs.openSync(tempPath, 'r+');
-            fs.fsyncSync(fd);
-            fs.closeSync(fd);
-
-            // 3. Renomeia de forma atômica (Substitui o original apenas se o novo estiver completo)
-            fs.renameSync(tempPath, this.dbPath);
-        } catch (error) {
-            console.error('[SQL.js] Save error:', error);
-            // Tenta limpar o arquivo temporário se falhar
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
             try {
-                if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-            } catch (e) { }
+                const data = this.db.export();
+                const buffer = Buffer.from(data);
+
+                // 1. Escreve no arquivo temporário
+                fs.writeFileSync(tempPath, buffer);
+
+                // 2. Garante que os dados foram gravados fisicamente no disco (Flush)
+                const fd = fs.openSync(tempPath, 'r+');
+                fs.fsyncSync(fd);
+                fs.closeSync(fd);
+
+                // 3. Tenta renomear de forma atômica
+                try {
+                    // No Windows, precisamos remover o arquivo de destino primeiro se existir
+                    if (fs.existsSync(this.dbPath)) {
+                        // Tenta remover o arquivo antigo
+                        try {
+                            fs.unlinkSync(this.dbPath);
+                        } catch (unlinkError) {
+                            // Se não conseguir remover, tenta backup
+                            const backupPath = this.dbPath + '.backup';
+                            try {
+                                if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
+                                fs.renameSync(this.dbPath, backupPath);
+                            } catch (backupError) {
+                                // Ignora erro de backup, tenta continuar
+                            }
+                        }
+                    }
+
+                    // Agora tenta renomear
+                    fs.renameSync(tempPath, this.dbPath);
+
+                    // Sucesso! Remove backup se existir
+                    const backupPath = this.dbPath + '.backup';
+                    if (fs.existsSync(backupPath)) {
+                        try {
+                            fs.unlinkSync(backupPath);
+                        } catch (e) { }
+                    }
+
+                    return; // Salvamento bem-sucedido
+                } catch (renameError) {
+                    if (renameError.code === 'EPERM' && attempt < maxRetries - 1) {
+                        // Espera um pouco antes de tentar novamente
+                        const delay = retryDelay * Math.pow(2, attempt);
+                        const start = Date.now();
+                        while (Date.now() - start < delay) {
+                            // Busy wait (sync)
+                        }
+                        continue; // Tenta novamente
+                    }
+                    throw renameError;
+                }
+            } catch (error) {
+                if (attempt === maxRetries - 1) {
+                    // Última tentativa falhou
+                    console.error('[SQL.js] Save error após múltiplas tentativas:', error);
+                    console.error('[SQL.js] Tentando salvamento direto como fallback...');
+
+                    // Fallback: salva diretamente (menos seguro, mas funciona)
+                    try {
+                        const data = this.db.export();
+                        const buffer = Buffer.from(data);
+                        fs.writeFileSync(this.dbPath, buffer);
+                        console.log('[SQL.js] Salvamento direto bem-sucedido');
+                    } catch (fallbackError) {
+                        console.error('[SQL.js] Fallback também falhou:', fallbackError);
+                    }
+                }
+
+                // Tenta limpar o arquivo temporário
+                try {
+                    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+                } catch (e) { }
+            }
         }
     }
 

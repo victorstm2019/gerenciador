@@ -73,8 +73,22 @@ const Login: React.FC = () => {
     }
 
     try {
-      await api.post('/api/auth/reset-password', { username });
-      alert('Senha resetada');
+      // Usar fetch direto para evitar interceptação do api.ts (erro 401 -> "Sessão expirada")
+      const response = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao resetar senha');
+      }
+
+      alert(data.message || 'Usuário padrão resetado com sucesso');
       setPassword('');
     } catch (err: any) {
       console.error('Reset error:', err);

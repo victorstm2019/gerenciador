@@ -79,6 +79,11 @@ const QueueHistory: React.FC = () => {
     const [dueDateStart, setDueDateStart] = useState('');
     const [dueDateEnd, setDueDateEnd] = useState('');
 
+    // W-API Queue states
+    const [showWapiQueueModal, setShowWapiQueueModal] = useState(false);
+    const [wapiQueueItems, setWapiQueueItems] = useState<any[]>([]);
+    const [loadingWapiQueue, setLoadingWapiQueue] = useState(false);
+
     // Save sendMode to localStorage whenever it changes
     useEffect(() => {
         localStorage.setItem('sendMode', sendMode);
@@ -109,14 +114,59 @@ const QueueHistory: React.FC = () => {
             });
     };
 
+    const fetchWapiQueue = async () => {
+        setLoadingWapiQueue(true);
+        try {
+            const data = await api.get<any>('/api/wapi/queue');
+            // A API pode retornar um array diretamente ou dentro de um objeto (data ou results)
+            const items = Array.isArray(data) ? data : (data.data || data.results || []);
+            setWapiQueueItems(items);
+        } catch (err: any) {
+            console.error("Error fetching W-API queue:", err);
+            // Silently fail if modal is not open, but alert if it is
+        } finally {
+            setLoadingWapiQueue(false);
+        }
+    };
+
+    const handleClearWapiQueue = async () => {
+        if (!confirm('⚠️ ATENÇÃO: Isso irá remover TODAS as mensagens pendentes na W-API.\n\nElas NÃO serão enviadas e este processo não pode ser desfeito.\n\nDeseja limpar a fila de envios da W-API agora?')) {
+            return;
+        }
+
+        setLoadingWapiQueue(true);
+        try {
+            await api.delete('/api/wapi/queue');
+            alert('Fila W-API limpa com sucesso!');
+            fetchWapiQueue();
+        } catch (err: any) {
+            alert('Erro ao limpar fila: ' + err.message);
+        } finally {
+            setLoadingWapiQueue(false);
+        }
+    };
+
+    const handleDeleteWapiMessage = async (insertedId: string) => {
+        if (!confirm('Remover esta mensagem específica da fila W-API?')) {
+            return;
+        }
+
+        try {
+            await api.delete(`/api/wapi/queue/${insertedId}`);
+            fetchWapiQueue();
+        } catch (err: any) {
+            alert('Erro ao remover mensagem: ' + err.message);
+        }
+    };
+
     const handleToggleAutoSend = async () => {
         const newValue = !autoSendMessages;
         setAutoSendMessages(newValue);
-        
+
         try {
             const currentConfig = await api.get('/api/config');
             await api.post('/api/config', {
-                ...currentConfig,
+                ...(currentConfig as any),
                 auto_send_messages: newValue
             });
         } catch (err: any) {
@@ -227,7 +277,7 @@ const QueueHistory: React.FC = () => {
 
         api.delete<{ deleted: number }>('/api/queue/items/bulk', {
             body: { ids: Array.from(selectedItems) }
-        })
+        } as any)
             .then(data => {
                 setLoading(false);
                 setSelectedItems(new Set());
@@ -555,873 +605,990 @@ const QueueHistory: React.FC = () => {
 
     return (
         <>
-        <SendProgressMonitor />
-        <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-                {/* Queue List */}
-                <div className="lg:col-span-4 space-y-6">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-                        <div className="flex flex-col gap-4 mb-4">
-                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                                <div className="flex items-center gap-3">
-                                    <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Fila & Histórico</h2>
-                                    <div className="relative group">
-                                        <button className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800 flex items-center justify-center transition-colors">
-                                            <span className="material-symbols-outlined text-lg">help</span>
-                                        </button>
-                                        <div className="absolute left-0 top-10 w-[600px] bg-white dark:bg-gray-900 border-2 border-blue-500 rounded-lg shadow-2xl p-6 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
-                                            <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400 mb-4 flex items-center gap-2">
-                                                <span className="material-symbols-outlined">info</span>
-                                                Tutorial: Como Funciona o Sistema
-                                            </h3>
-                                            
-                                            <div className="space-y-4 text-sm text-gray-700 dark:text-gray-300">
-                                                <div>
-                                                    <h4 className="font-bold text-green-600 dark:text-green-400 mb-1">🟢 Modo Fila (Automático)</h4>
-                                                    <p className="text-xs leading-relaxed">• Sistema gera mensagens automaticamente no horário configurado (via scheduler a cada 30 min)</p>
-                                                    <p className="text-xs leading-relaxed">• Verifica: modo ativo, se já executou hoje, horário configurado</p>
-                                                    <p className="text-xs leading-relaxed">• Se "Envio Automático" estiver ATIVO: envia imediatamente após gerar</p>
-                                                    <p className="text-xs leading-relaxed">• Se "Envio Automático" estiver INATIVO: apenas adiciona à fila para envio manual</p>
-                                                </div>
-                                                
-                                                <div>
-                                                    <h4 className="font-bold text-orange-600 dark:text-orange-400 mb-1">🔶 Modo Manual</h4>
-                                                    <p className="text-xs leading-relaxed">• Você controla quando gerar e enviar mensagens</p>
-                                                    <p className="text-xs leading-relaxed">• Use os botões "Gerar Lembretes" ou "Gerar Vencidos" para adicionar à fila</p>
-                                                    <p className="text-xs leading-relaxed">• Selecione itens na tabela e clique "Enviar Selecionados"</p>
-                                                    <p className="text-xs leading-relaxed">• Opção "Gerar Vencidos por Data" permite escolher período específico</p>
-                                                </div>
-                                                
-                                                <div>
-                                                    <h4 className="font-bold text-purple-600 dark:text-purple-400 mb-1">📋 Geração de Mensagens</h4>
-                                                    <p className="text-xs leading-relaxed">• <strong>Lembretes:</strong> Parcelas que vencem em X dias (configurável)</p>
-                                                    <p className="text-xs leading-relaxed">• <strong>Vencidos:</strong> Parcelas já vencidas há X dias (configurável)</p>
-                                                    <p className="text-xs leading-relaxed">• Sistema busca dados do SQL Server configurado</p>
-                                                    <p className="text-xs leading-relaxed">• Aplica template de mensagem com variáveis personalizadas</p>
-                                                </div>
-                                                
-                                                <div>
-                                                    <h4 className="font-bold text-blue-600 dark:text-blue-400 mb-1">📤 Envio de Mensagens</h4>
-                                                    <p className="text-xs leading-relaxed">• Mensagens com status PENDING podem ser enviadas</p>
-                                                    <p className="text-xs leading-relaxed">• Sistema verifica lista negativa antes de enviar</p>
-                                                    <p className="text-xs leading-relaxed">• Após envio: status muda para SENT ou ERROR</p>
-                                                    <p className="text-xs leading-relaxed">• Bloqueios podem ser por parcela específica ou cliente completo</p>
-                                                </div>
-                                                
-                                                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded p-2 mt-2">
-                                                    <p className="text-xs text-yellow-800 dark:text-yellow-300"><strong>💡 Dica:</strong> Configure tudo em "Configuração de Mensagens" antes de ativar o Modo Fila!</p>
+            <SendProgressMonitor />
+            <div className="space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                    {/* Queue List */}
+                    <div className="lg:col-span-4 space-y-6">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                            <div className="flex flex-col gap-4 mb-4">
+                                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                    <div className="flex items-center gap-3">
+                                        <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Fila & Histórico</h2>
+                                        <div className="relative group">
+                                            <button className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800 flex items-center justify-center transition-colors">
+                                                <span className="material-symbols-outlined text-lg">help</span>
+                                            </button>
+                                            <div className="absolute left-0 top-10 w-[600px] bg-white dark:bg-gray-900 border-2 border-blue-500 rounded-lg shadow-2xl p-6 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                                                <h3 className="text-lg font-bold text-blue-600 dark:text-blue-400 mb-4 flex items-center gap-2">
+                                                    <span className="material-symbols-outlined">info</span>
+                                                    Tutorial: Como Funciona o Sistema
+                                                </h3>
+
+                                                <div className="space-y-4 text-sm text-gray-700 dark:text-gray-300">
+                                                    <div>
+                                                        <h4 className="font-bold text-green-600 dark:text-green-400 mb-1">🟢 Modo Fila (Automático)</h4>
+                                                        <p className="text-xs leading-relaxed">• Sistema gera mensagens automaticamente no horário configurado (via scheduler a cada 30 min)</p>
+                                                        <p className="text-xs leading-relaxed">• Verifica: modo ativo, se já executou hoje, horário configurado</p>
+                                                        <p className="text-xs leading-relaxed">• Se "Envio Automático" estiver ATIVO: envia imediatamente após gerar</p>
+                                                        <p className="text-xs leading-relaxed">• Se "Envio Automático" estiver INATIVO: apenas adiciona à fila para envio manual</p>
+                                                    </div>
+
+                                                    <div>
+                                                        <h4 className="font-bold text-orange-600 dark:text-orange-400 mb-1">🔶 Modo Manual</h4>
+                                                        <p className="text-xs leading-relaxed">• Você controla quando gerar e enviar mensagens</p>
+                                                        <p className="text-xs leading-relaxed">• Use os botões "Gerar Lembretes" ou "Gerar Vencidos" para adicionar à fila</p>
+                                                        <p className="text-xs leading-relaxed">• Selecione itens na tabela e clique "Enviar Selecionados"</p>
+                                                        <p className="text-xs leading-relaxed">• Opção "Gerar Vencidos por Data" permite escolher período específico</p>
+                                                    </div>
+
+                                                    <div>
+                                                        <h4 className="font-bold text-purple-600 dark:text-purple-400 mb-1">📋 Geração de Mensagens</h4>
+                                                        <p className="text-xs leading-relaxed">• <strong>Lembretes:</strong> Parcelas que vencem em X dias (configurável)</p>
+                                                        <p className="text-xs leading-relaxed">• <strong>Vencidos:</strong> Parcelas já vencidas há X dias (configurável)</p>
+                                                        <p className="text-xs leading-relaxed">• Sistema busca dados do SQL Server configurado</p>
+                                                        <p className="text-xs leading-relaxed">• Aplica template de mensagem com variáveis personalizadas</p>
+                                                    </div>
+
+                                                    <div>
+                                                        <h4 className="font-bold text-blue-600 dark:text-blue-400 mb-1">📤 Envio de Mensagens</h4>
+                                                        <p className="text-xs leading-relaxed">• Mensagens com status PENDING podem ser enviadas</p>
+                                                        <p className="text-xs leading-relaxed">• Sistema verifica lista negativa antes de enviar</p>
+                                                        <p className="text-xs leading-relaxed">• Após envio: status muda para SENT ou ERROR</p>
+                                                        <p className="text-xs leading-relaxed">• Bloqueios podem ser por parcela específica ou cliente completo</p>
+                                                    </div>
+
+                                                    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded p-2 mt-2">
+                                                        <p className="text-xs text-yellow-800 dark:text-yellow-300"><strong>💡 Dica:</strong> Configure tudo em "Configuração de Mensagens" antes de ativar o Modo Fila!</p>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
 
-                                {/* Send Mode Toggle */}
-                                <div className="flex items-center gap-4">
-                                    {sendMode === 'queue' && (
+                                    {/* Send Mode Toggle */}
+                                    <div className="flex items-center gap-4">
+                                        {sendMode === 'queue' && (
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-sm text-gray-600 dark:text-gray-400">Envio Automático:</span>
+                                                <label className="relative inline-flex items-center cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        className="sr-only peer"
+                                                        checked={autoSendMessages}
+                                                        onChange={handleToggleAutoSend}
+                                                    />
+                                                    <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                                </label>
+                                            </div>
+                                        )}
                                         <div className="flex items-center gap-3">
-                                            <span className="text-sm text-gray-600 dark:text-gray-400">Envio Automático:</span>
+                                            <span className="text-sm text-gray-600 dark:text-gray-400">Modo:</span>
                                             <label className="relative inline-flex items-center cursor-pointer">
                                                 <input
                                                     type="checkbox"
                                                     className="sr-only peer"
-                                                    checked={autoSendMessages}
-                                                    onChange={handleToggleAutoSend}
+                                                    checked={sendMode === 'manual'}
+                                                    onChange={(e) => setSendMode(e.target.checked ? 'manual' : 'queue')}
                                                 />
-                                                <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                                <div className="w-20 h-8 bg-green-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-12 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-7 after:w-7 after:transition-all dark:border-gray-600 peer-checked:bg-orange-400"></div>
                                             </label>
+                                            <span className={`text-sm font-medium ${sendMode === 'queue' ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                                                {sendMode === 'queue' ? '🟢 Fila' : '🔶 Manual'}
+                                            </span>
                                         </div>
-                                    )}
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-sm text-gray-600 dark:text-gray-400">Modo:</span>
-                                        <label className="relative inline-flex items-center cursor-pointer">
-                                            <input
-                                                type="checkbox"
-                                                className="sr-only peer"
-                                                checked={sendMode === 'manual'}
-                                                onChange={(e) => setSendMode(e.target.checked ? 'manual' : 'queue')}
-                                            />
-                                            <div className="w-20 h-8 bg-green-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-12 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-7 after:w-7 after:transition-all dark:border-gray-600 peer-checked:bg-orange-400"></div>
-                                        </label>
-                                        <span className={`text-sm font-medium ${sendMode === 'queue' ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
-                                            {sendMode === 'queue' ? '🟢 Fila' : '🔶 Manual'}
-                                        </span>
                                     </div>
                                 </div>
-                            </div>
 
-                            {/* Generation Buttons */}
-                            <div className="flex flex-wrap gap-2">
-                                <button
-                                    onClick={generateReminders}
-                                    className="px-4 py-2 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 transition-colors flex items-center gap-2"
-                                >
-                                    <span className="material-symbols-outlined text-sm">notifications</span>
-                                    Gerar Lembretes
-                                </button>
-                                <button
-                                    onClick={generateOverdue}
-                                    className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors flex items-center gap-2"
-                                >
-                                    <span className="material-symbols-outlined text-sm">warning</span>
-                                    Gerar Vencidos
-                                </button>
-                                {sendMode === 'manual' && (
+                                {/* Generation Buttons */}
+                                <div className="flex flex-wrap gap-2">
                                     <button
-                                        onClick={() => setShowDateRangeModal(true)}
-                                        className="px-4 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                                        onClick={generateReminders}
+                                        className="px-4 py-2 bg-yellow-600 text-white text-sm rounded hover:bg-yellow-700 transition-colors flex items-center gap-2"
                                     >
-                                        <span className="material-symbols-outlined text-sm">calendar_month</span>
-                                        Gerar Vencidos por Data
+                                        <span className="material-symbols-outlined text-sm">notifications</span>
+                                        Gerar Lembretes
                                     </button>
-                                )}
-                            </div>
-
-                        </div>
-
-                        {/* Search and Filters */}
-                        <div className="flex flex-col gap-3">
-                            <div className="flex flex-col md:flex-row gap-3">
-                                <input
-                                    type="text"
-                                    placeholder="Buscar por nome, código ou CPF..."
-                                    className="flex-1 px-3 py-2 border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
-                                <div className="flex flex-wrap items-end gap-4">
-                                    {/* Status Filters Group */}
-                                    <div className="flex flex-col gap-1">
-                                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Status</span>
-                                        <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                                            <button
-                                                onClick={() => setFilterStatus('todos')}
-                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'todos' ? 'bg-white dark:bg-gray-600 shadow text-gray-800 dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-                                            >
-                                                Todos
-                                            </button>
-                                            <button
-                                                onClick={() => setFilterStatus('pendente')}
-                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'pendente' ? 'bg-white dark:bg-gray-600 shadow text-yellow-600 dark:text-yellow-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-                                            >
-                                                Pendentes
-                                            </button>
-                                            <button
-                                                onClick={() => setFilterStatus('enviado')}
-                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'enviado' ? 'bg-white dark:bg-gray-600 shadow text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-                                            >
-                                                Enviados
-                                            </button>
-                                            <button
-                                                onClick={() => setFilterStatus('bloqueado')}
-                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'bloqueado' ? 'bg-white dark:bg-gray-600 shadow text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-                                            >
-                                                Bloqueados
-                                            </button>
-                                            <button
-                                                onClick={() => setFilterStatus('erro')}
-                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'erro' ? 'bg-white dark:bg-gray-600 shadow text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-                                            >
-                                                Erros
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {/* Vertical Separator */}
-                                    <div className="h-8 w-px bg-gray-300 dark:bg-gray-600 hidden md:block mb-1"></div>
-
-                                    {/* Type Filters Group */}
-                                    <div className="flex flex-col gap-1">
-                                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Tipo</span>
-                                        <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                                            <button
-                                                onClick={() => setFilterType('all')}
-                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === 'all' ? 'bg-white dark:bg-gray-600 shadow text-gray-800 dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-                                            >
-                                                Todos
-                                            </button>
-                                            <button
-                                                onClick={() => setFilterType('reminder')}
-                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === 'reminder' ? 'bg-white dark:bg-gray-600 shadow text-yellow-600 dark:text-yellow-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-                                            >
-                                                Lembretes
-                                            </button>
-                                            <button
-                                                onClick={() => setFilterType('overdue')}
-                                                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === 'overdue' ? 'bg-white dark:bg-gray-600 shadow text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
-                                            >
-                                                Vencidos
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Date Filters and Sorting */}
-                            <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
-                                <div className="flex gap-2 items-center">
-                                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">Vencimento:</label>
-                                    <input
-                                        type="date"
-                                        className="px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                        value={dueDateStart}
-                                        onChange={(e) => setDueDateStart(e.target.value)}
-                                    />
-                                    <span className="text-gray-400">-</span>
-                                    <input
-                                        type="date"
-                                        className="px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                        value={dueDateEnd}
-                                        onChange={(e) => setDueDateEnd(e.target.value)}
-                                    />
-                                    {dueDateStart && dueDateEnd && dueDateStart > dueDateEnd && (
-                                        <span className="text-xs text-red-600 dark:text-red-400 ml-2">
-                                            ⚠️ Data inicial maior que final
-                                        </span>
-                                    )}
-                                </div>
-
-                                {/* Sorting Buttons */}
-                                <div className="flex gap-2 items-center flex-wrap">
-                                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Ordenar por:</span>
-                                    {(['code', 'name', 'dueDate', 'value', 'status'] as const).map((field) => (
-                                        <button
-                                            key={field}
-                                            onClick={() => {
-                                                if (sortBy === field) {
-                                                    setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-                                                } else {
-                                                    setSortBy(field);
-                                                    setSortOrder('asc');
-                                                }
-                                            }}
-                                            className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${sortBy === field
-                                                ? 'bg-blue-600 text-white'
-                                                : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-                                                }`}
-                                        >
-                                            {field === 'code' && 'Código'}
-                                            {field === 'name' && 'Nome'}
-                                            {field === 'dueDate' && 'Vencimento'}
-                                            {field === 'value' && 'Valor'}
-                                            {field === 'status' && 'Status'}
-                                            {sortBy === field && (
-                                                <span className="material-symbols-outlined text-xs">
-                                                    {sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}
-                                                </span>
-                                            )}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Queue Table with Scrolling */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-                        <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                            <table className="w-full text-sm text-left">
-                                <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300 sticky top-0">
-                                    <tr>
-                                        <th className="px-4 py-3 w-12">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectAll}
-                                                onChange={handleSelectAll}
-                                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                                                title="Selecionar todos os itens"
-                                            />
-                                        </th>
-                                        <th className="px-4 py-3">ID Parcela</th>
-                                        <th className="px-4 py-3">Cliente</th>
-                                        <th className="px-4 py-3">TELEFONE</th>
-                                        <th className="px-4 py-3">Vencimento</th>
-                                        <th className="px-4 py-3 text-right">Valor</th>
-                                        <th className="px-4 py-3">Status</th>
-                                        <th className="px-4 py-3">Ações</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                                    {filteredQueue.map((item) => (
-                                        <tr
-                                            key={item.id}
-                                            className="bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                                            onClick={() => {
-                                                setSelectedMessage(item);
-                                                setShowMessageModal(true);
-                                            }}
-                                        >
-                                            <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedItems.has(item.id)}
-                                                    onChange={() => handleSelectItem(item.id)}
-                                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                                                />
-                                            </td>
-                                            <td className="px-4 py-3 font-mono text-xs text-gray-900 dark:text-white">{item.installmentId || item.id}</td>
-                                            <td className="px-4 py-3">
-                                                <div>
-                                                    <p className="font-medium text-gray-900 dark:text-white">{item.clientName}</p>
-                                                    <p className="text-xs text-gray-500">{item.cpf}</p>
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                                                {formatPhoneDisplay(item.phone)}
-                                            </td>
-                                            <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
-                                                {parseBrazilianDate(item.dueDate)}
-                                            </td>
-                                            <td className="px-4 py-3 font-medium text-right">{formatCurrency(item.installmentValue)}</td>
-                                            <td className="px-4 py-3">
-                                                <span className={`px-2 py-1 rounded text-xs ${item.status === 'SENT' ? 'bg-green-100 text-green-800' :
-                                                    item.status === 'ERROR' ? 'bg-red-100 text-red-800' :
-                                                        item.status === 'BLOCKED' ? 'bg-blue-100 text-blue-800' :
-                                                            item.status === 'PREVIEW' ? 'bg-purple-100 text-purple-800' :
-                                                                'bg-yellow-100 text-yellow-800'
-                                                    }`}>
-                                                    {item.status === 'SENT' ? 'Enviado' :
-                                                        item.status === 'ERROR' ? 'Erro' :
-                                                            item.status === 'BLOCKED' ? 'Bloqueado' :
-                                                                item.status === 'PREVIEW' ? 'Preview' :
-                                                                    'Pendente'}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <div className="flex gap-2">
-                                                    {item.messageContent && (
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                setSelectedMessage(item);
-                                                                setShowMessageModal(true);
-                                                            }}
-                                                            className="text-blue-600 hover:text-blue-800"
-                                                            title="Ver mensagem"
-                                                        >
-                                                            <span className="material-symbols-outlined text-sm">visibility</span>
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setBlockingItem({ item, type: 'installment' });
-                                                        }}
-                                                        className="text-orange-600 hover:text-orange-800"
-                                                        title="Bloquear esta parcela"
-                                                    >
-                                                        <span className="material-symbols-outlined text-sm">block</span>
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setBlockingItem({ item, type: 'client' });
-                                                        }}
-                                                        className="text-red-600 hover:text-red-800"
-                                                        title="Bloquear todas deste cliente"
-                                                    >
-                                                        <span className="material-symbols-outlined text-sm">person_off</span>
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {filteredQueue.length === 0 && (
-                                        <tr>
-                                            <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-                                                Nenhum item encontrado.
-                                            </td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    {/* Actions for Selected Items */}
-                    {selectedItems.size > 0 && (
-                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mt-4">
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm text-gray-700 dark:text-gray-300">
-                                    <strong>{selectedItems.size}</strong> item(ns) selecionado(s)
-                                </span>
-                                <div className="flex gap-2">
                                     <button
-                                        onClick={handleDeleteSelected}
-                                        disabled={loading}
-                                        className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+                                        onClick={generateOverdue}
+                                        className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors flex items-center gap-2"
                                     >
-                                        <span className="material-symbols-outlined text-sm">delete</span>
-                                        Excluir Selecionados
+                                        <span className="material-symbols-outlined text-sm">warning</span>
+                                        Gerar Vencidos
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setShowWapiQueueModal(true);
+                                            fetchWapiQueue();
+                                        }}
+                                        className="px-4 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition-colors flex items-center gap-2"
+                                    >
+                                        <span className="material-symbols-outlined text-sm">cloud_queue</span>
+                                        Fila W-API
                                     </button>
                                     {sendMode === 'manual' && (
                                         <button
-                                            onClick={handleSendSelected}
-                                            disabled={sending}
-                                            className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            onClick={() => setShowDateRangeModal(true)}
+                                            className="px-4 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition-colors flex items-center gap-2"
                                         >
-                                            <span className="material-symbols-outlined text-sm">send</span>
-                                            {sending ? 'Enviando...' : `Enviar Selecionados`}
+                                            <span className="material-symbols-outlined text-sm">calendar_month</span>
+                                            Gerar Vencidos por Data
                                         </button>
                                     )}
                                 </div>
+
                             </div>
-                        </div>
-                    )}
-                </div>
 
-                {/* Blocked List - Right Sidebar */}
-                <div className="lg:col-span-1 space-y-6">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-                        <h2 className="text-sm font-semibold mb-4 text-gray-700 dark:text-gray-200">Lista Negativa</h2>
-                        <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                            {blocked.map((item) => (
-                                <div key={item.id} className="p-3 border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900 flex justify-between items-start">
-                                    <div>
-                                        <p className="font-medium text-xs text-gray-900 dark:text-white">{item.client_name}</p>
-                                        <p className="text-[10px] text-gray-500">{item.reason}</p>
-                                        <div className="flex gap-2 mt-1">
-                                            {item.block_type && (
-                                                <span className={`text-[10px] px-2 py-0.5 rounded ${item.block_type === 'client'
-                                                    ? 'bg-red-100 text-red-800'
-                                                    : 'bg-orange-100 text-orange-800'
-                                                    }`}>
-                                                    {item.block_type === 'client' ? 'Cliente Completo' : 'Parcela Específica'}
-                                                </span>
-                                            )}
-                                            <p className="text-[10px] text-gray-400">{new Date(item.created_at).toLocaleDateString()}</p>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={() => handleUnblock(item.id)}
-                                        className="text-gray-400 hover:text-green-600"
-                                        title="Desbloquear"
-                                    >
-                                        <span className="material-symbols-outlined">lock_open</span>
-                                    </button>
-                                </div>
-                            ))}
-                            {blocked.length === 0 && (
-                                <p className="text-xs text-gray-500 text-center py-4">Nenhum cliente bloqueado.</p>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Preview Modal */}
-            {showPreview && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-                        <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-                            <h3 className="text-xl font-bold text-gray-800 dark:text-white">Preview de Mensagens</h3>
-                            <button
-                                onClick={() => setShowPreview(false)}
-                                className="text-gray-400 hover:text-gray-600"
-                            >
-                                <span className="material-symbols-outlined">close</span>
-                            </button>
-                        </div>
-                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
-                            <div className="space-y-4">
-                                {previewMessages.map((msg, idx) => (
-                                    <div key={idx} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-700">
-                                        <div className="flex justify-between items-start mb-2">
-                                            <div>
-                                                <p className="font-semibold text-gray-900 dark:text-white">{msg.clientName}</p>
-                                                <p className="text-xs text-gray-500">Código: {msg.code} | CPF: {msg.cpf}</p>
-                                                <p className="text-xs text-gray-500">Vencimento: {parseBrazilianDate(msg.dueDate)} | Valor: {formatCurrency(msg.installmentValue)}</p>
+                            {/* Search and Filters */}
+                            <div className="flex flex-col gap-3">
+                                <div className="flex flex-col md:flex-row gap-3">
+                                    <input
+                                        type="text"
+                                        placeholder="Buscar por nome, código ou CPF..."
+                                        className="flex-1 px-3 py-2 border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm"
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                    />
+                                    <div className="flex flex-wrap items-end gap-4">
+                                        {/* Status Filters Group */}
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Status</span>
+                                            <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                                                <button
+                                                    onClick={() => setFilterStatus('todos')}
+                                                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'todos' ? 'bg-white dark:bg-gray-600 shadow text-gray-800 dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                                >
+                                                    Todos
+                                                </button>
+                                                <button
+                                                    onClick={() => setFilterStatus('pendente')}
+                                                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'pendente' ? 'bg-white dark:bg-gray-600 shadow text-yellow-600 dark:text-yellow-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                                >
+                                                    Pendentes
+                                                </button>
+                                                <button
+                                                    onClick={() => setFilterStatus('enviado')}
+                                                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'enviado' ? 'bg-white dark:bg-gray-600 shadow text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                                >
+                                                    Enviados
+                                                </button>
+                                                <button
+                                                    onClick={() => setFilterStatus('bloqueado')}
+                                                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'bloqueado' ? 'bg-white dark:bg-gray-600 shadow text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                                >
+                                                    Bloqueados
+                                                </button>
+                                                <button
+                                                    onClick={() => setFilterStatus('erro')}
+                                                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === 'erro' ? 'bg-white dark:bg-gray-600 shadow text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                                >
+                                                    Erros
+                                                </button>
                                             </div>
-                                            <span className={`px-2 py-1 rounded text-xs ${msg.messageType === 'reminder' ? 'bg-blue-100 text-blue-800' : 'bg-orange-100 text-orange-800'
-                                                }`}>
-                                                {msg.messageType === 'reminder' ? 'Lembrete' : 'Atraso'}
-                                            </span>
                                         </div>
-                                        <div className="bg-gray-100 dark:bg-gray-900 p-3 rounded mt-2">
-                                            <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{msg.messageContent}</p>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
-                            <button
-                                onClick={() => setShowPreview(false)}
-                                className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
-                            >
-                                Fechar
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
 
-            {/* Message View Modal */}
-            {showMessageModal && selectedMessage && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-                        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-                            <h3 className="text-xl font-bold text-gray-800 dark:text-white">Mensagem - {selectedMessage.clientName}</h3>
-                            <button
-                                onClick={() => setShowMessageModal(false)}
-                                className="text-gray-400 hover:text-gray-600"
-                            >
-                                <span className="material-symbols-outlined">close</span>
-                            </button>
-                        </div>
-                        <div className="p-4">
-                            <div className="space-y-2 mb-4">
-                                <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-sm">
-                                    <div>
-                                        <p className="text-gray-500 dark:text-gray-400">Código</p>
-                                        <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.code}</p>
+                                        {/* Vertical Separator */}
+                                        <div className="h-8 w-px bg-gray-300 dark:bg-gray-600 hidden md:block mb-1"></div>
+
+                                        {/* Type Filters Group */}
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1">Tipo</span>
+                                            <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                                                <button
+                                                    onClick={() => setFilterType('all')}
+                                                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === 'all' ? 'bg-white dark:bg-gray-600 shadow text-gray-800 dark:text-white' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                                >
+                                                    Todos
+                                                </button>
+                                                <button
+                                                    onClick={() => setFilterType('reminder')}
+                                                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === 'reminder' ? 'bg-white dark:bg-gray-600 shadow text-yellow-600 dark:text-yellow-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                                >
+                                                    Lembretes
+                                                </button>
+                                                <button
+                                                    onClick={() => setFilterType('overdue')}
+                                                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === 'overdue' ? 'bg-white dark:bg-gray-600 shadow text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                                >
+                                                    Vencidos
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <p className="text-gray-500 dark:text-gray-400">CPF</p>
-                                        <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.cpf}</p>
+                                </div>
+
+                                {/* Date Filters and Sorting */}
+                                <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
+                                    <div className="flex gap-2 items-center">
+                                        <label className="text-xs font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">Vencimento:</label>
+                                        <input
+                                            type="date"
+                                            className="px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                            value={dueDateStart}
+                                            onChange={(e) => setDueDateStart(e.target.value)}
+                                        />
+                                        <span className="text-gray-400">-</span>
+                                        <input
+                                            type="date"
+                                            className="px-2 py-1 text-xs border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                            value={dueDateEnd}
+                                            onChange={(e) => setDueDateEnd(e.target.value)}
+                                        />
+                                        {dueDateStart && dueDateEnd && dueDateStart > dueDateEnd && (
+                                            <span className="text-xs text-red-600 dark:text-red-400 ml-2">
+                                                ⚠️ Data inicial maior que final
+                                            </span>
+                                        )}
                                     </div>
-                                    <div>
-                                        <p className="text-gray-500 dark:text-gray-400">Emissão</p>
-                                        <p className="font-medium text-gray-900 dark:text-white">
-                                            {parseBrazilianDate(selectedMessage.emissionDate)}
-                                        </p>
-                                    </div>
-                                    <div>
-                                        <p className="text-gray-500 dark:text-gray-400">Vencimento</p>
-                                        <p className="font-medium text-gray-900 dark:text-white">
-                                            {parseBrazilianDate(selectedMessage.dueDate)}
-                                        </p>
-                                    </div>
-                                    <div>
-                                        <p className="text-gray-500 dark:text-gray-400">Valor</p>
-                                        <p className="font-medium text-gray-900 dark:text-white">{formatCurrency(selectedMessage.installmentValue)}</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-gray-500 dark:text-gray-400">Telefone</p>
-                                        <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.phone || 'N/A'}</p>
-                                    </div>
-                                    <div className="col-span-2">
-                                        <p className="text-gray-500 dark:text-gray-400">Descrição da Parcela</p>
-                                        <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.description || 'N/A'}</p>
+
+                                    {/* Sorting Buttons */}
+                                    <div className="flex gap-2 items-center flex-wrap">
+                                        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Ordenar por:</span>
+                                        {(['code', 'name', 'dueDate', 'value', 'status'] as const).map((field) => (
+                                            <button
+                                                key={field}
+                                                onClick={() => {
+                                                    if (sortBy === field) {
+                                                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                                                    } else {
+                                                        setSortBy(field);
+                                                        setSortOrder('asc');
+                                                    }
+                                                }}
+                                                className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${sortBy === field
+                                                    ? 'bg-blue-600 text-white'
+                                                    : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+                                                    }`}
+                                            >
+                                                {field === 'code' && 'Código'}
+                                                {field === 'name' && 'Nome'}
+                                                {field === 'dueDate' && 'Vencimento'}
+                                                {field === 'value' && 'Valor'}
+                                                {field === 'status' && 'Status'}
+                                                {sortBy === field && (
+                                                    <span className="material-symbols-outlined text-xs">
+                                                        {sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                                                    </span>
+                                                )}
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
                             </div>
-                            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-                                <p className="text-sm font-semibold text-blue-800 dark:text-blue-300 mb-2">Conteúdo da Mensagem:</p>
-                                <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
-                                    {selectedMessage.messageContent || 'Mensagem não disponível'}
-                                </p>
-                            </div>
-                        </div>
-                        <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
-                            <button
-                                onClick={() => setShowMessageModal(false)}
-                                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                            >
-                                Fechar
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Block Confirmation Modal */}
-            {blockingItem && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
-                        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-                            <h3 className="text-xl font-bold text-gray-800 dark:text-white">
-                                {blockingItem.type === 'installment' ? 'Bloquear Parcela' : 'Bloquear Cliente'}
-                            </h3>
-                            <p className="text-sm text-gray-500 mt-1">
-                                {blockingItem.type === 'installment'
-                                    ? 'Esta parcela específica não receberá mensagens'
-                                    : `Todas as mensagens de ${blockingItem.item.clientName} serão bloqueadas`
-                                }
-                            </p>
-                        </div>
-                        <div className="p-6">
-                            <div className="mb-4">
-                                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Cliente: {blockingItem.item.clientName}</p>
-                                <p className="text-xs text-gray-500">Código: {blockingItem.item.code}</p>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Motivo do Bloqueio</label>
-                                <textarea
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                    rows={3}
-                                    value={blockReason}
-                                    onChange={(e) => setBlockReason(e.target.value)}
-                                    placeholder="Informe o motivo..."
-                                />
-                            </div>
-                        </div>
-                        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
-                            <button
-                                onClick={() => {
-                                    setBlockingItem(null);
-                                    setBlockReason('');
-                                }}
-                                className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                onClick={() => {
-                                    if (blockingItem.type === 'installment') {
-                                        handleBlockInstallment(blockingItem.item);
-                                    } else {
-                                        handleBlockClient(blockingItem.item);
-                                    }
-                                }}
-                                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-                            >
-                                Bloquear
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Manual Batch Warning Modal */}
-            {showManualWarning && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
-                        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-                            <h3 className="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-                                <span className="material-symbols-outlined text-orange-500">warning</span>
-                                Atenção: Geração Manual
-                            </h3>
-                        </div>
-                        <div className="p-6">
-                            <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4 mb-4">
-                                <p className="text-sm text-orange-800 dark:text-orange-300">
-                                    A geração manual ignora as verificações de envio automático de hoje. Isso pode resultar em mensagens duplicadas se o sistema automático já tiver rodado.
-                                </p>
-                            </div>
-                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-                                Selecione os tipos de mensagem que deseja gerar:
-                            </p>
-                            <div className="space-y-2">
-                                <label className="flex items-center gap-2 p-2 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedBatchTypes?.includes('reminder') || false}
-                                        onChange={(e) => {
-                                            if (e.target.checked) {
-                                                setSelectedBatchTypes([...selectedBatchTypes, 'reminder']);
-                                            } else {
-                                                setSelectedBatchTypes(selectedBatchTypes.filter(t => t !== 'reminder'));
-                                            }
-                                        }}
-                                        className="rounded text-blue-600 focus:ring-blue-500"
-                                    />
-                                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Lembretes de Vencimento</span>
-                                </label>
-                                <label className="flex items-center gap-2 p-2 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={selectedBatchTypes?.includes('overdue') || false}
-                                        onChange={(e) => {
-                                            if (e.target.checked) {
-                                                setSelectedBatchTypes([...selectedBatchTypes, 'overdue']);
-                                            } else {
-                                                setSelectedBatchTypes(selectedBatchTypes.filter(t => t !== 'overdue'));
-                                            }
-                                        }}
-                                        className="rounded text-blue-600 focus:ring-blue-500"
-                                    />
-                                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Avisos de Atraso</span>
-                                </label>
-                            </div>
-                        </div>
-                        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
-                            <button
-                                onClick={() => setShowManualWarning(false)}
-                                className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                onClick={handleManualBatchConfirm}
-                                className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
-                            >
-                                Confirmar Geração
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Date Range Selection Modal */}
-            {showDateRangeModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
-                        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-                            <h3 className="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-                                <span className="material-symbols-outlined text-indigo-500">calendar_month</span>
-                                Gerar Vencidos por Data
-                            </h3>
-                        </div>
-                        <div className="p-6 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data Início</label>
-                                <input
-                                    type="date"
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                    value={dateRangeStart}
-                                    onChange={(e) => setDateRangeStart(e.target.value)}
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data Fim</label>
-                                <input
-                                    type="date"
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                    value={dateRangeEnd}
-                                    onChange={(e) => setDateRangeEnd(e.target.value)}
-                                />
-                            </div>
-                        </div>
-                        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
-                            <button
-                                onClick={() => setShowDateRangeModal(false)}
-                                className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                onClick={handleDateRangeGenerate}
-                                disabled={loadingDatePreview}
-                                className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                            >
-                                {loadingDatePreview ? (
-                                    <>
-                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                        Gerando...
-                                    </>
-                                ) : (
-                                    'Gerar Preview'
-                                )}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Date Generation Preview Modal */}
-            {showDatePreview && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-                        <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-                            <div>
-                                <h3 className="text-xl font-bold text-gray-800 dark:text-white">Preview de Geração por Data</h3>
-                                <p className="text-sm text-gray-500">
-                                    {datePreviewItems.length} itens encontrados. Selecione os que deseja adicionar à fila.
-                                </p>
-                            </div>
-                            <button
-                                onClick={() => setShowDatePreview(false)}
-                                className="text-gray-400 hover:text-gray-600"
-                            >
-                                <span className="material-symbols-outlined">close</span>
-                            </button>
                         </div>
 
-                        <div className="flex-1 overflow-auto p-0">
-                            <table className="w-full text-sm text-left">
-                                <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300 sticky top-0 z-10">
-                                    <tr>
-                                        <th className="px-4 py-3 w-12">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedDateItems.size === datePreviewItems.length && datePreviewItems.length > 0}
-                                                onChange={handleDateSelectAll}
-                                                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                            />
-                                        </th>
-                                        <th className="px-4 py-3">Código</th>
-                                        <th className="px-4 py-3">Cliente</th>
-                                        <th className="px-4 py-3">Vencimento</th>
-                                        <th className="px-4 py-3">Valor</th>
-                                        <th className="px-4 py-3">Mensagem</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                                    {datePreviewItems.map((item) => (
-                                        <tr
-                                            key={item.id}
-                                            className={`hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer ${selectedDateItems.has(item.id) ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''}`}
-                                            onClick={() => handleDateItemSelect(item.id)}
-                                        >
-                                            <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        {/* Queue Table with Scrolling */}
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300 sticky top-0">
+                                        <tr>
+                                            <th className="px-4 py-3 w-12">
                                                 <input
                                                     type="checkbox"
-                                                    checked={selectedDateItems.has(item.id)}
-                                                    onChange={() => handleDateItemSelect(item.id)}
-                                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                    checked={selectAll}
+                                                    onChange={handleSelectAll}
+                                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                                    title="Selecionar todos os itens"
                                                 />
-                                            </td>
-                                            <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{item.code}</td>
-                                            <td className="px-4 py-3">
-                                                <div>
-                                                    <p className="font-medium text-gray-900 dark:text-white">{item.clientName}</p>
-                                                    <p className="text-xs text-gray-500">{item.cpf}</p>
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                                                {parseBrazilianDate(item.dueDate)}
-                                            </td>
-                                            <td className="px-4 py-3 font-medium">{formatCurrency(item.installmentValue)}</td>
-                                            <td className="px-4 py-3">
-                                                <p className="text-xs text-gray-500 truncate max-w-xs" title={item.messageContent}>
-                                                    {item.messageContent}
-                                                </p>
-                                            </td>
+                                            </th>
+                                            <th className="px-4 py-3">ID Parcela</th>
+                                            <th className="px-4 py-3">Cliente</th>
+                                            <th className="px-4 py-3">TELEFONE</th>
+                                            <th className="px-4 py-3">Vencimento</th>
+                                            <th className="px-4 py-3 text-right">Valor</th>
+                                            <th className="px-4 py-3">Status</th>
+                                            <th className="px-4 py-3">Ações</th>
                                         </tr>
-                                    ))}
-                                    {datePreviewItems.length === 0 && (
-                                        <tr>
-                                            <td colSpan={6} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-                                                Nenhum item encontrado para o período selecionado.
-                                            </td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                        {filteredQueue.map((item) => (
+                                            <tr
+                                                key={item.id}
+                                                className="bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                                                onClick={() => {
+                                                    setSelectedMessage(item);
+                                                    setShowMessageModal(true);
+                                                }}
+                                            >
+                                                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedItems.has(item.id)}
+                                                        onChange={() => handleSelectItem(item.id)}
+                                                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                                    />
+                                                </td>
+                                                <td className="px-4 py-3 font-mono text-xs text-gray-900 dark:text-white">{item.installmentId || item.id}</td>
+                                                <td className="px-4 py-3">
+                                                    <div>
+                                                        <p className="font-medium text-gray-900 dark:text-white">{item.clientName}</p>
+                                                        <p className="text-xs text-gray-500">{item.cpf}</p>
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                                                    {formatPhoneDisplay(item.phone)}
+                                                </td>
+                                                <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                                                    {parseBrazilianDate(item.dueDate)}
+                                                </td>
+                                                <td className="px-4 py-3 font-medium text-right">{formatCurrency(item.installmentValue)}</td>
+                                                <td className="px-4 py-3">
+                                                    <span className={`px-2 py-1 rounded text-xs ${item.status === 'SENT' ? 'bg-green-100 text-green-800' :
+                                                        item.status === 'ERROR' ? 'bg-red-100 text-red-800' :
+                                                            item.status === 'BLOCKED' ? 'bg-blue-100 text-blue-800' :
+                                                                item.status === 'PREVIEW' ? 'bg-purple-100 text-purple-800' :
+                                                                    'bg-yellow-100 text-yellow-800'
+                                                        }`}>
+                                                        {item.status === 'SENT' ? 'Enviado' :
+                                                            item.status === 'ERROR' ? 'Erro' :
+                                                                item.status === 'BLOCKED' ? 'Bloqueado' :
+                                                                    item.status === 'PREVIEW' ? 'Preview' :
+                                                                        'Pendente'}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <div className="flex gap-2">
+                                                        {item.messageContent && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setSelectedMessage(item);
+                                                                    setShowMessageModal(true);
+                                                                }}
+                                                                className="text-blue-600 hover:text-blue-800"
+                                                                title="Ver mensagem"
+                                                            >
+                                                                <span className="material-symbols-outlined text-sm">visibility</span>
+                                                            </button>
+                                                        )}
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setBlockingItem({ item, type: 'installment' });
+                                                            }}
+                                                            className="text-orange-600 hover:text-orange-800"
+                                                            title="Bloquear esta parcela"
+                                                        >
+                                                            <span className="material-symbols-outlined text-sm">block</span>
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setBlockingItem({ item, type: 'client' });
+                                                            }}
+                                                            className="text-red-600 hover:text-red-800"
+                                                            title="Bloquear todas deste cliente"
+                                                        >
+                                                            <span className="material-symbols-outlined text-sm">person_off</span>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {filteredQueue.length === 0 && (
+                                            <tr>
+                                                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                                                    Nenhum item encontrado.
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
 
-                        <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
-                            <div className="text-sm text-gray-600 dark:text-gray-400">
-                                <strong>{selectedDateItems.size}</strong> itens selecionados
+                        {/* Actions for Selected Items */}
+                        {selectedItems.size > 0 && (
+                            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mt-4">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-700 dark:text-gray-300">
+                                        <strong>{selectedItems.size}</strong> item(ns) selecionado(s)
+                                    </span>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={handleDeleteSelected}
+                                            disabled={loading}
+                                            className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+                                        >
+                                            <span className="material-symbols-outlined text-sm">delete</span>
+                                            Excluir Selecionados
+                                        </button>
+                                        {sendMode === 'manual' && (
+                                            <button
+                                                onClick={handleSendSelected}
+                                                disabled={sending}
+                                                className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                <span className="material-symbols-outlined text-sm">send</span>
+                                                {sending ? 'Enviando...' : `Enviar Selecionados`}
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
-                            <div className="flex gap-3">
+                        )}
+                    </div>
+
+                    {/* Blocked List - Right Sidebar */}
+                    <div className="lg:col-span-1 space-y-6">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                            <h2 className="text-sm font-semibold mb-4 text-gray-700 dark:text-gray-200">Lista Negativa</h2>
+                            <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                                {blocked.map((item) => (
+                                    <div key={item.id} className="p-3 border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900 flex justify-between items-start">
+                                        <div>
+                                            <p className="font-medium text-xs text-gray-900 dark:text-white">{item.client_name}</p>
+                                            <p className="text-[10px] text-gray-500">{item.reason}</p>
+                                            <div className="flex gap-2 mt-1">
+                                                {item.block_type && (
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded ${item.block_type === 'client'
+                                                        ? 'bg-red-100 text-red-800'
+                                                        : 'bg-orange-100 text-orange-800'
+                                                        }`}>
+                                                        {item.block_type === 'client' ? 'Cliente Completo' : 'Parcela Específica'}
+                                                    </span>
+                                                )}
+                                                <p className="text-[10px] text-gray-400">{new Date(item.created_at).toLocaleDateString()}</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => handleUnblock(item.id)}
+                                            className="text-gray-400 hover:text-green-600"
+                                            title="Desbloquear"
+                                        >
+                                            <span className="material-symbols-outlined">lock_open</span>
+                                        </button>
+                                    </div>
+                                ))}
+                                {blocked.length === 0 && (
+                                    <p className="text-xs text-gray-500 text-center py-4">Nenhum cliente bloqueado.</p>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Preview Modal */}
+                {showPreview && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+                            <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                                <h3 className="text-xl font-bold text-gray-800 dark:text-white">Preview de Mensagens</h3>
                                 <button
-                                    onClick={() => setShowDatePreview(false)}
+                                    onClick={() => setShowPreview(false)}
+                                    className="text-gray-400 hover:text-gray-600"
+                                >
+                                    <span className="material-symbols-outlined">close</span>
+                                </button>
+                            </div>
+                            <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+                                <div className="space-y-4">
+                                    {previewMessages.map((msg, idx) => (
+                                        <div key={idx} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <div>
+                                                    <p className="font-semibold text-gray-900 dark:text-white">{msg.clientName}</p>
+                                                    <p className="text-xs text-gray-500">Código: {msg.code} | CPF: {msg.cpf}</p>
+                                                    <p className="text-xs text-gray-500">Vencimento: {parseBrazilianDate(msg.dueDate)} | Valor: {formatCurrency(msg.installmentValue)}</p>
+                                                </div>
+                                                <span className={`px-2 py-1 rounded text-xs ${msg.messageType === 'reminder' ? 'bg-blue-100 text-blue-800' : 'bg-orange-100 text-orange-800'
+                                                    }`}>
+                                                    {msg.messageType === 'reminder' ? 'Lembrete' : 'Atraso'}
+                                                </span>
+                                            </div>
+                                            <div className="bg-gray-100 dark:bg-gray-900 p-3 rounded mt-2">
+                                                <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{msg.messageContent}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+                                <button
+                                    onClick={() => setShowPreview(false)}
+                                    className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
+                                >
+                                    Fechar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Message View Modal */}
+                {showMessageModal && selectedMessage && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+                            <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                                <h3 className="text-xl font-bold text-gray-800 dark:text-white">Mensagem - {selectedMessage.clientName}</h3>
+                                <button
+                                    onClick={() => setShowMessageModal(false)}
+                                    className="text-gray-400 hover:text-gray-600"
+                                >
+                                    <span className="material-symbols-outlined">close</span>
+                                </button>
+                            </div>
+                            <div className="p-4">
+                                <div className="space-y-2 mb-4">
+                                    <div className="grid grid-cols-2 gap-y-2 gap-x-2 text-sm">
+                                        <div>
+                                            <p className="text-gray-500 dark:text-gray-400">Código</p>
+                                            <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.code}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-gray-500 dark:text-gray-400">CPF</p>
+                                            <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.cpf}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-gray-500 dark:text-gray-400">Emissão</p>
+                                            <p className="font-medium text-gray-900 dark:text-white">
+                                                {parseBrazilianDate(selectedMessage.emissionDate)}
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <p className="text-gray-500 dark:text-gray-400">Vencimento</p>
+                                            <p className="font-medium text-gray-900 dark:text-white">
+                                                {parseBrazilianDate(selectedMessage.dueDate)}
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <p className="text-gray-500 dark:text-gray-400">Valor</p>
+                                            <p className="font-medium text-gray-900 dark:text-white">{formatCurrency(selectedMessage.installmentValue)}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-gray-500 dark:text-gray-400">Telefone</p>
+                                            <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.phone || 'N/A'}</p>
+                                        </div>
+                                        <div className="col-span-2">
+                                            <p className="text-gray-500 dark:text-gray-400">Descrição da Parcela</p>
+                                            <p className="font-medium text-gray-900 dark:text-white">{selectedMessage.description || 'N/A'}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                                    <p className="text-sm font-semibold text-blue-800 dark:text-blue-300 mb-2">Conteúdo da Mensagem:</p>
+                                    <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+                                        {selectedMessage.messageContent || 'Mensagem não disponível'}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+                                <button
+                                    onClick={() => setShowMessageModal(false)}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                                >
+                                    Fechar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Block Confirmation Modal */}
+                {blockingItem && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
+                            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+                                <h3 className="text-xl font-bold text-gray-800 dark:text-white">
+                                    {blockingItem.type === 'installment' ? 'Bloquear Parcela' : 'Bloquear Cliente'}
+                                </h3>
+                                <p className="text-sm text-gray-500 mt-1">
+                                    {blockingItem.type === 'installment'
+                                        ? 'Esta parcela específica não receberá mensagens'
+                                        : `Todas as mensagens de ${blockingItem.item.clientName} serão bloqueadas`
+                                    }
+                                </p>
+                            </div>
+                            <div className="p-6">
+                                <div className="mb-4">
+                                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Cliente: {blockingItem.item.clientName}</p>
+                                    <p className="text-xs text-gray-500">Código: {blockingItem.item.code}</p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Motivo do Bloqueio</label>
+                                    <textarea
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                        rows={3}
+                                        value={blockReason}
+                                        onChange={(e) => setBlockReason(e.target.value)}
+                                        placeholder="Informe o motivo..."
+                                    />
+                                </div>
+                            </div>
+                            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+                                <button
+                                    onClick={() => {
+                                        setBlockingItem(null);
+                                        setBlockReason('');
+                                    }}
                                     className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
                                 >
                                     Cancelar
                                 </button>
                                 <button
-                                    onClick={handleDatePreviewConfirm}
-                                    disabled={selectedDateItems.size === 0 || loadingConfirm}
+                                    onClick={() => {
+                                        if (blockingItem.type === 'installment') {
+                                            handleBlockInstallment(blockingItem.item);
+                                        } else {
+                                            handleBlockClient(blockingItem.item);
+                                        }
+                                    }}
+                                    className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                                >
+                                    Bloquear
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Manual Batch Warning Modal */}
+                {showManualWarning && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
+                            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+                                <h3 className="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                                    <span className="material-symbols-outlined text-orange-500">warning</span>
+                                    Atenção: Geração Manual
+                                </h3>
+                            </div>
+                            <div className="p-6">
+                                <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4 mb-4">
+                                    <p className="text-sm text-orange-800 dark:text-orange-300">
+                                        A geração manual ignora as verificações de envio automático de hoje. Isso pode resultar em mensagens duplicadas se o sistema automático já tiver rodado.
+                                    </p>
+                                </div>
+                                <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                                    Selecione os tipos de mensagem que deseja gerar:
+                                </p>
+                                <div className="space-y-2">
+                                    <label className="flex items-center gap-2 p-2 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedBatchTypes?.includes('reminder') || false}
+                                            onChange={(e) => {
+                                                if (e.target.checked) {
+                                                    setSelectedBatchTypes(prev => [...prev, 'reminder']);
+                                                } else {
+                                                    setSelectedBatchTypes(prev => prev.filter(t => t !== 'reminder'));
+                                                }
+                                            }}
+                                            className="rounded text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Lembretes de Vencimento</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 p-2 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedBatchTypes?.includes('overdue') || false}
+                                            onChange={(e) => {
+                                                if (e.target.checked) {
+                                                    setSelectedBatchTypes(prev => [...prev, 'overdue']);
+                                                } else {
+                                                    setSelectedBatchTypes(prev => prev.filter(t => t !== 'overdue'));
+                                                }
+                                            }}
+                                            className="rounded text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Avisos de Atraso</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+                                <button
+                                    onClick={() => setShowManualWarning(false)}
+                                    className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleManualBatchConfirm}
+                                    className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+                                >
+                                    Confirmar Geração
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Date Range Selection Modal */}
+                {showDateRangeModal && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
+                            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+                                <h3 className="text-xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                                    <span className="material-symbols-outlined text-indigo-500">calendar_month</span>
+                                    Gerar Vencidos por Data
+                                </h3>
+                            </div>
+                            <div className="p-6 space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data Início</label>
+                                    <input
+                                        type="date"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                        value={dateRangeStart}
+                                        onChange={(e) => setDateRangeStart(e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Data Fim</label>
+                                    <input
+                                        type="date"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                        value={dateRangeEnd}
+                                        onChange={(e) => setDateRangeEnd(e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+                                <button
+                                    onClick={() => setShowDateRangeModal(false)}
+                                    className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleDateRangeGenerate}
+                                    disabled={loadingDatePreview}
                                     className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                                 >
-                                    {loadingConfirm ? (
+                                    {loadingDatePreview ? (
                                         <>
                                             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                            Adicionando... ({confirmTimeout}s)
+                                            Gerando...
                                         </>
                                     ) : (
-                                        'Confirmar e Adicionar à Fila'
+                                        'Gerar Preview'
                                     )}
                                 </button>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )}
+
+                {/* Date Generation Preview Modal */}
+                {showDatePreview && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                            <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                                <div>
+                                    <h3 className="text-xl font-bold text-gray-800 dark:text-white">Preview de Geração por Data</h3>
+                                    <p className="text-sm text-gray-500">
+                                        {datePreviewItems.length} itens encontrados. Selecione os que deseja adicionar à fila.
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => setShowDatePreview(false)}
+                                    className="text-gray-400 hover:text-gray-600"
+                                >
+                                    <span className="material-symbols-outlined">close</span>
+                                </button>
+                            </div>
+
+                            <div className="flex-1 overflow-auto p-0">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-300 sticky top-0 z-10">
+                                        <tr>
+                                            <th className="px-4 py-3 w-12">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedDateItems.size === datePreviewItems.length && datePreviewItems.length > 0}
+                                                    onChange={handleDateSelectAll}
+                                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                />
+                                            </th>
+                                            <th className="px-4 py-3">Código</th>
+                                            <th className="px-4 py-3">Cliente</th>
+                                            <th className="px-4 py-3">Vencimento</th>
+                                            <th className="px-4 py-3">Valor</th>
+                                            <th className="px-4 py-3">Mensagem</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                        {datePreviewItems.map((item) => (
+                                            <tr
+                                                key={item.id}
+                                                className={`hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer ${selectedDateItems.has(item.id) ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''}`}
+                                                onClick={() => handleDateItemSelect(item.id)}
+                                            >
+                                                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedDateItems.has(item.id)}
+                                                        onChange={() => handleDateItemSelect(item.id)}
+                                                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                    />
+                                                </td>
+                                                <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{item.code}</td>
+                                                <td className="px-4 py-3">
+                                                    <div>
+                                                        <p className="font-medium text-gray-900 dark:text-white">{item.clientName}</p>
+                                                        <p className="text-xs text-gray-500">{item.cpf}</p>
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
+                                                    {parseBrazilianDate(item.dueDate)}
+                                                </td>
+                                                <td className="px-4 py-3 font-medium">{formatCurrency(item.installmentValue)}</td>
+                                                <td className="px-4 py-3">
+                                                    <p className="text-xs text-gray-500 truncate max-w-xs" title={item.messageContent}>
+                                                        {item.messageContent}
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                        {datePreviewItems.length === 0 && (
+                                            <tr>
+                                                <td colSpan={6} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                                                    Nenhum item encontrado para o período selecionado.
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                                <div className="text-sm text-gray-600 dark:text-gray-400">
+                                    <strong>{selectedDateItems.size}</strong> itens selecionados
+                                </div>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => setShowDatePreview(false)}
+                                        className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        onClick={handleDatePreviewConfirm}
+                                        disabled={selectedDateItems.size === 0 || loadingConfirm}
+                                        className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                    >
+                                        {loadingConfirm ? (
+                                            <>
+                                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                                Adicionando... ({confirmTimeout}s)
+                                            </>
+                                        ) : (
+                                            'Confirmar e Adicionar à Fila'
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                {/* W-API Queue Management Modal */}
+                {showWapiQueueModal && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                            <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-900 text-white">
+                                <div>
+                                    <h3 className="text-xl font-bold flex items-center gap-2">
+                                        <span className="material-symbols-outlined">cloud_queue</span>
+                                        Fila de Envios no Provedor (W-API)
+                                    </h3>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                        Visualize aqui as mensagens que já saíram do gerenciador e estão aguardando processamento na W-API.
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                    <button
+                                        onClick={fetchWapiQueue}
+                                        disabled={loadingWapiQueue}
+                                        className="p-2 hover:bg-gray-700 rounded-full transition-colors"
+                                        title="Atualizar Fila"
+                                    >
+                                        <span className={`material-symbols-outlined ${loadingWapiQueue ? 'animate-spin' : ''}`}>refresh</span>
+                                    </button>
+                                    <button
+                                        onClick={() => setShowWapiQueueModal(false)}
+                                        className="text-gray-400 hover:text-white"
+                                    >
+                                        <span className="material-symbols-outlined">close</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex-1 overflow-auto p-0 bg-gray-50 dark:bg-gray-900">
+                                {loadingWapiQueue && wapiQueueItems.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+                                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-4"></div>
+                                        <p>Consultando API remota...</p>
+                                    </div>
+                                ) : (
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="text-xs text-gray-700 uppercase bg-gray-100 dark:bg-gray-800 dark:text-gray-300 sticky top-0 z-10 shadow-sm">
+                                            <tr>
+                                                <th className="px-4 py-3">ID Remoto</th>
+                                                <th className="px-4 py-3">Telefone</th>
+                                                <th className="px-4 py-3">Mensagem</th>
+                                                <th className="px-4 py-3 text-center">Ações</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                            {wapiQueueItems.map((item, idx) => (
+                                                <tr key={item.insertedId || idx} className="hover:bg-white dark:hover:bg-gray-800 transition-colors">
+                                                    <td className="px-4 py-3 font-mono text-[10px] text-gray-500">{item.insertedId}</td>
+                                                    <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{item.phone}</td>
+                                                    <td className="px-4 py-3">
+                                                        <p className="text-xs text-gray-600 dark:text-gray-400 break-words line-clamp-2 max-w-md" title={item.message}>
+                                                            {item.message}
+                                                        </p>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <button
+                                                            onClick={() => handleDeleteWapiMessage(item.insertedId)}
+                                                            className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                                                            title="Remover apenas esta mensagem"
+                                                        >
+                                                            <span className="material-symbols-outlined text-lg">delete</span>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {wapiQueueItems.length === 0 && (
+                                                <tr>
+                                                    <td colSpan={4} className="px-4 py-12 text-center">
+                                                        <span className="material-symbols-outlined text-4xl text-gray-300 mb-2">check_circle</span>
+                                                        <p className="text-gray-500">Fila remota vazia. Nenhuma mensagem pendente no provedor.</p>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
+
+                            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center bg-white dark:bg-gray-800">
+                                <div className="text-sm">
+                                    <span className="text-gray-500">Total na fila:</span>
+                                    <strong className="ml-2 text-gray-900 dark:text-white">{wapiQueueItems.length} mensagens</strong>
+                                </div>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => setShowWapiQueueModal(false)}
+                                        className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 dark:text-white font-medium"
+                                    >
+                                        Fechar
+                                    </button>
+                                    <button
+                                        onClick={handleClearWapiQueue}
+                                        disabled={loadingWapiQueue || wapiQueueItems.length === 0}
+                                        className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-bold shadow-lg shadow-red-500/20"
+                                    >
+                                        <span className="material-symbols-outlined">delete_forever</span>
+                                        LIMPAR TODA A FILA W-API
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
         </>
     );
 };

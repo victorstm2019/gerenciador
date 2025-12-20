@@ -55,14 +55,14 @@ const authMiddleware = (req, res, next) => {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Token de autenticação não fornecido' });
+        return res.status(401).json({ error: 'Token de autenticação não fornecido. Por favor, faça login para obter um token válido.' });
     }
 
     const token = authHeader.substring(7); // Remove 'Bearer '
     const session = activeSessions.get(token);
 
     if (!session) {
-        return res.status(401).json({ error: 'Token inválido ou expirado' });
+        return res.status(401).json({ error: 'Sua sessão expirou ou é inválida. Por favor, faça login novamente.' });
     }
 
     // Attach user info to request
@@ -137,7 +137,7 @@ app.post('/api/auth/login', (req, res) => {
         }
 
         if (user.password !== password) {
-            return res.status(401).json({ error: 'Senha incorreta' });
+            return res.status(401).json({ error: 'Senha inválida, tente novamente' });
         }
 
         const token = crypto.randomUUID();
@@ -167,23 +167,42 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 // Reset password endpoint
-app.post('/api/auth/reset-password', authMiddleware, (req, res) => {
+app.post('/api/auth/reset-password', (req, res) => {
     const { username } = req.body;
+    console.log(`[RESET PASSWORD] Tentativa de reset para o usuário: ${username}`);
 
     if (!username) {
+        console.log('[RESET PASSWORD] Nome de usuário não fornecido.');
         return res.status(400).json({ error: 'Nome de usuário é obrigatório' });
     }
 
-    db.run("UPDATE users SET password = ?, first_login = 1 WHERE username = ?", ['hiperadm', username], function (err) {
+    // Primeiro verifica se o usuário existe e é admin
+    db.get("SELECT role FROM users WHERE username = ? COLLATE NOCASE", [username], (err, user) => {
         if (err) {
+            console.error(`[RESET PASSWORD] Erro ao verificar usuário ${username}:`, err.message);
             return res.status(500).json({ error: err.message });
         }
 
-        if (this.changes === 0) {
+        if (!user) {
+            console.warn(`[RESET PASSWORD] Usuário '${username}' não encontrado.`);
             return res.status(404).json({ error: 'Usuário não encontrado' });
         }
 
-        res.json({ message: 'Senha resetada com sucesso' });
+        if (user.role !== 'admin') {
+            console.warn(`[RESET PASSWORD] Tentativa de reset de usuário não-admin: ${username}`);
+            return res.status(403).json({ error: 'Apenas administradores podem ter senha resetada' });
+        }
+
+        // Agora faz o reset
+        db.run("UPDATE users SET password = ?, first_login = 1 WHERE username = ? COLLATE NOCASE", ['hiperadm', username], function (err) {
+            if (err) {
+                console.error(`[RESET PASSWORD] Erro no banco de dados ao resetar ${username}:`, err.message);
+                return res.status(500).json({ error: err.message });
+            }
+
+            console.log(`[RESET PASSWORD] Senha do usuário ${username} resetada com sucesso.`);
+            res.json({ message: 'Usuário padrão resetado com sucesso' });
+        });
     });
 });
 
@@ -2220,52 +2239,60 @@ app.put('/api/queue/items/:id/select', authMiddleware, (req, res) => {
 // Delete multiple queue items
 // Delete multiple queue items
 app.delete('/api/queue/items/bulk', authMiddleware, async (req, res) => {
-    const { ids } = req.body;
+    try {
+        const { ids } = req.body;
 
-    if (!Array.isArray(ids) || ids.length === 0) {
-        res.status(400).json({ error: "IDs array is required" });
-        return;
-    }
+        if (!Array.isArray(ids) || ids.length === 0) {
+            console.warn('[bulk-delete] Requisição recebida sem IDs válidos');
+            res.status(400).json({ error: "IDs array is required" });
+            return;
+        }
 
-    const CHUNK_SIZE = 500;
-    let deletedCount = 0;
-    let errors = [];
+        console.log(`[bulk-delete] Iniciando exclusão de ${ids.length} itens`);
 
-    // Process in chunks to avoid SQLite variable limit
-    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
-        const chunk = ids.slice(i, i + CHUNK_SIZE);
-        const placeholders = chunk.map(() => '?').join(',');
-        const query = `DELETE FROM queue_items WHERE id IN(${placeholders})`;
+        const CHUNK_SIZE = 500;
+        let deletedCount = 0;
+        let errors = [];
 
-        try {
-            await new Promise((resolve, reject) => {
-                db.run(query, chunk, function (err) {
-                    if (err) reject(err);
-                    else {
-                        deletedCount += this.changes;
-                        resolve();
-                    }
+        // Process in chunks to avoid SQLite variable limit
+        for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+            const chunk = ids.slice(i, i + CHUNK_SIZE);
+            const placeholders = chunk.map(() => '?').join(',');
+            const query = `DELETE FROM queue_items WHERE id IN(${placeholders})`;
+
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run(query, chunk, function (err) {
+                        if (err) reject(err);
+                        else {
+                            deletedCount += this.changes;
+                            resolve();
+                        }
+                    });
                 });
+            } catch (err) {
+                console.error(`Error deleting chunk ${i}:`, err);
+                errors.push(err.message);
+            }
+        }
+
+        if (errors.length > 0 && deletedCount === 0) {
+            res.status(500).json({ error: "Failed to delete items", details: errors });
+        } else {
+            // Log deletion
+            if (deletedCount > 0) {
+                logEvent('INFO', `Exclusão em massa: ${deletedCount} itens removidos`, JSON.stringify({ deleted: deletedCount, requested: ids.length }));
+            }
+
+            res.json({
+                message: "Items processed",
+                deleted: deletedCount,
+                errors: errors.length > 0 ? errors : undefined
             });
-        } catch (err) {
-            console.error(`Error deleting chunk ${i}:`, err);
-            errors.push(err.message);
         }
-    }
-
-    if (errors.length > 0 && deletedCount === 0) {
-        res.status(500).json({ error: "Failed to delete items", details: errors });
-    } else {
-        // Log deletion
-        if (deletedCount > 0) {
-            logEvent('INFO', `Exclusão em massa: ${deletedCount} itens removidos`, JSON.stringify({ deleted: deletedCount, requested: ids.length }));
-        }
-
-        res.json({
-            message: "Items processed",
-            deleted: deletedCount,
-            errors: errors.length > 0 ? errors : undefined
-        });
+    } catch (error) {
+        console.error('[bulk-delete] Erro crítico:', error);
+        res.status(500).json({ error: "Erro interno ao processar exclusão em massa", details: error.message });
     }
 });
 
@@ -2289,6 +2316,130 @@ app.delete('/api/queue/:id', authMiddleware, (req, res) => {
 });
 
 // Helper function to send message via W-API
+// --- W-API Queue Management API ---
+
+// List W-API Queue
+app.get('/api/wapi/queue', authMiddleware, async (req, res) => {
+    try {
+        const wapiConfig = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM wapi_config ORDER BY id DESC LIMIT 1", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!wapiConfig || !wapiConfig.instance_id || !wapiConfig.bearer_token) {
+            return res.status(400).json({ error: "W-API não configurada" });
+        }
+
+        const fetch = (await import('node-fetch')).default;
+        const url = `https://api.w-api.app/v1/quere/quere?instanceId=${wapiConfig.instance_id}&perPage=100&page=1`;
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${wapiConfig.bearer_token}`,
+                'Content-Type': 'application/json'
+            },
+            agent: insecureAgent
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            res.json(data);
+        } else {
+            res.status(response.status).json({
+                error: data.message || `Erro W-API: ${response.status}`
+            });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message || "Erro ao consultar fila W-API" });
+    }
+});
+
+// Clear W-API Queue
+app.delete('/api/wapi/queue', authMiddleware, async (req, res) => {
+    try {
+        const wapiConfig = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM wapi_config ORDER BY id DESC LIMIT 1", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!wapiConfig || !wapiConfig.instance_id || !wapiConfig.bearer_token) {
+            return res.status(400).json({ error: "W-API não configurada" });
+        }
+
+        const fetch = (await import('node-fetch')).default;
+        const url = `https://api.w-api.app/v1/quere/delete-quere?instanceId=${wapiConfig.instance_id}`;
+
+        const response = await fetch(url, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${wapiConfig.bearer_token}`,
+                'Content-Type': 'application/json'
+            },
+            agent: insecureAgent
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            logEvent('INFO', 'Fila W-API limpa manualmente', `Usuário: ${req.user.username}`);
+            res.json({ message: "Fila limpa com sucesso", result: data });
+        } else {
+            res.status(response.status).json({
+                error: data.message || `Erro W-API: ${response.status}`
+            });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message || "Erro ao limpar fila W-API" });
+    }
+});
+
+// Delete specific message from W-API Queue
+app.delete('/api/wapi/queue/:insertedId', authMiddleware, async (req, res) => {
+    const { insertedId } = req.params;
+    try {
+        const wapiConfig = await new Promise((resolve, reject) => {
+            db.get("SELECT * FROM wapi_config ORDER BY id DESC LIMIT 1", (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!wapiConfig || !wapiConfig.instance_id || !wapiConfig.bearer_token) {
+            return res.status(400).json({ error: "W-API não configurada" });
+        }
+
+        const fetch = (await import('node-fetch')).default;
+        const url = `https://api.w-api.app/v1/quere/delete-message?instanceId=${wapiConfig.instance_id}&insertedId=${insertedId}`;
+
+        const response = await fetch(url, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${wapiConfig.bearer_token}`,
+                'Content-Type': 'application/json'
+            },
+            agent: insecureAgent
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            res.json({ message: "Mensagem removida da fila", result: data });
+        } else {
+            res.status(response.status).json({
+                error: data.message || `Erro W-API: ${response.status}`
+            });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message || "Erro ao remover mensagem da fila W-API" });
+    }
+});
+
 async function sendMessageViaWAPI(phone, message) {
     // Get W-API config
     const wapiConfig = await new Promise((resolve, reject) => {
